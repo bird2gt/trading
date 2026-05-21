@@ -9,7 +9,7 @@ from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
 LOT_SIZE = 0.01
-POLL_INTERVAL = 60  # seconds
+POLL_INTERVAL = 300  # 5 minutes — stays within TwelveData free plan
 ATR_PERIOD = 14
 ATR_SL_MULT = 1.5
 ATR_TP_MULT = 3.0
@@ -51,12 +51,13 @@ def trading_loop():
     while True:
         for symbol in FOREX_SYMBOLS:
             try:
-                df = fetch_ohlcv(symbol, outputsize=100)
-                signal = STRATEGY.generate_signal(df)
+                df_h4 = fetch_ohlcv(symbol, outputsize=100, interval="4h")
+                df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
+                signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
                 if signal == 1:
-                    send_signal(symbol, "BUY", df)
+                    send_signal(symbol, "BUY", df_h4)
                 elif signal == -1:
-                    send_signal(symbol, "SELL", df)
+                    send_signal(symbol, "SELL", df_h4)
                 else:
                     print(f"{symbol}: no signal")
             except Exception as e:

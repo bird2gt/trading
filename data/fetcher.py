@@ -9,12 +9,13 @@ CACHE_DIR.mkdir(exist_ok=True)
 BASE_URL = "https://api.twelvedata.com/time_series"
 
 
-def fetch_ohlcv(symbol: str, outputsize: int = 500) -> pd.DataFrame:
-    cache_file = CACHE_DIR / f"{symbol.replace('/', '_')}_{TIMEFRAME}.parquet"
+def fetch_ohlcv(symbol: str, outputsize: int = 500, interval: str | None = None) -> pd.DataFrame:
+    tf = interval or TIMEFRAME
+    cache_file = CACHE_DIR / f"{symbol.replace('/', '_')}_{tf}.parquet"
 
     params = {
         "symbol": symbol,
-        "interval": TIMEFRAME,
+        "interval": tf,
         "outputsize": outputsize,
         "apikey": TWELVE_DATA_API_KEY,
         "format": "JSON",

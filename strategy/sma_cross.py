@@ -8,7 +8,7 @@ class SMACross(BaseStrategy):
         self.slow = slow
         self.rsi_period = rsi_period
 
-    def generate_signal(self, df: pd.DataFrame) -> int:
+    def generate_signal(self, df: pd.DataFrame, df_trend: pd.DataFrame | None = None) -> int:
         close = df["close"]
         fast_ma = close.rolling(self.fast).mean()
         slow_ma = close.rolling(self.slow).mean()
@@ -17,9 +17,21 @@ class SMACross(BaseStrategy):
         crossed_up = fast_ma.iloc[-1] > slow_ma.iloc[-1] and fast_ma.iloc[-2] <= slow_ma.iloc[-2]
         crossed_dn = fast_ma.iloc[-1] < slow_ma.iloc[-1] and fast_ma.iloc[-2] >= slow_ma.iloc[-2]
 
-        if crossed_up and rsi.iloc[-1] < 65:
+        trend = self._trend(df_trend) if df_trend is not None else 0
+
+        if crossed_up and rsi.iloc[-1] < 65 and trend >= 0:
             return 1
-        if crossed_dn and rsi.iloc[-1] > 35:
+        if crossed_dn and rsi.iloc[-1] > 35 and trend <= 0:
+            return -1
+        return 0
+
+    def _trend(self, df: pd.DataFrame) -> int:
+        close = df["close"]
+        fast = close.rolling(self.fast).mean().iloc[-1]
+        slow = close.rolling(self.slow).mean().iloc[-1]
+        if fast > slow:
+            return 1
+        if fast < slow:
             return -1
         return 0
 
