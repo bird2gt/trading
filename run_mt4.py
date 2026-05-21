@@ -11,8 +11,8 @@ BRIDGE_URL = "http://127.0.0.1:8000"
 LOT_SIZE = 0.01
 POLL_INTERVAL = 300  # 5 minutes — stays within TwelveData free plan
 ATR_PERIOD = 14
-ATR_SL_MULT = 1.5
-ATR_TP_MULT = 3.0
+ATR_SL_MULT  = 1.5
+ATR_TP1_MULT = 1.5  # 50% close at 1:1 risk/reward
 
 STRATEGY = SMACross(fast=20, slow=50)
 
@@ -29,22 +29,22 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame):
     atr = _atr(df)
 
     if action == "BUY":
-        sl = round(entry - ATR_SL_MULT * atr, 5)
-        tp = round(entry + ATR_TP_MULT * atr, 5)
+        sl  = round(entry - ATR_SL_MULT  * atr, 5)
+        tp1 = round(entry + ATR_TP1_MULT * atr, 5)
     elif action == "SELL":
-        sl = round(entry + ATR_SL_MULT * atr, 5)
-        tp = round(entry - ATR_TP_MULT * atr, 5)
+        sl  = round(entry + ATR_SL_MULT  * atr, 5)
+        tp1 = round(entry - ATR_TP1_MULT * atr, 5)
     else:
-        sl = tp = 0.0
+        sl = tp1 = 0.0
 
     requests.post(f"{BRIDGE_URL}/signal", json={
         "symbol": mt4_symbol,
         "action": action,
         "lots": LOT_SIZE,
         "sl": sl,
-        "tp": tp,
+        "tp": tp1,
     }, timeout=3)
-    print(f"{td_symbol}: {action} | SL={sl:.5f} TP={tp:.5f}")
+    print(f"{td_symbol}: {action} | SL={sl:.5f} TP1={tp1:.5f}")
 
 
 def trading_loop():
