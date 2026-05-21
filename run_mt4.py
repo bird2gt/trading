@@ -10,7 +10,7 @@ from strategy.sentiment import analyze_sentiment
 from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
-LOT_SIZE = 0.01
+LOT_SIZE = 0.02
 POLL_INTERVAL = 300  # 5 minutes — stays within TwelveData free plan
 ATR_PERIOD = 14
 ATR_SL_MULT  = 1.5
