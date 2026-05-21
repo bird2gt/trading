@@ -4,7 +4,9 @@ import requests
 import pandas as pd
 from config.settings import FOREX_SYMBOLS
 from data.fetcher import fetch_ohlcv
+from data.news import fetch_headlines
 from strategy.sma_cross import SMACross
+from strategy.sentiment import analyze_sentiment
 from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
@@ -54,12 +56,24 @@ def trading_loop():
                 df_h4 = fetch_ohlcv(symbol, outputsize=100, interval="4h")
                 df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
                 signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
-                if signal == 1:
-                    send_signal(symbol, "BUY", df_h4)
-                elif signal == -1:
-                    send_signal(symbol, "SELL", df_h4)
-                else:
+
+                if signal == 0:
                     print(f"{symbol}: no signal")
+                    continue
+
+                headlines  = fetch_headlines(symbol)
+                sentiment  = analyze_sentiment(symbol, headlines)
+                print(f"{symbol}: signal={'BUY' if signal==1 else 'SELL'} | sentiment={sentiment}")
+
+                if signal == 1 and sentiment == "bearish":
+                    print(f"{symbol}: BUY blocked by bearish sentiment")
+                    continue
+                if signal == -1 and sentiment == "bullish":
+                    print(f"{symbol}: SELL blocked by bullish sentiment")
+                    continue
+
+                send_signal(symbol, "BUY" if signal == 1 else "SELL", df_h4)
+
             except Exception as e:
                 print(f"{symbol}: error — {e}")
         time.sleep(POLL_INTERVAL)

@@ -4,3 +4,5 @@ pyarrow
 fastapi
 uvicorn
 python-dotenv
+anthropic
+feedparser
