@@ -1,0 +1,6 @@
+requests
+pandas
+pyarrow
+fastapi
+uvicorn
+python-dotenv
