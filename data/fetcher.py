@@ -1,45 +1,62 @@
-import requests
 import pandas as pd
-from pathlib import Path
-from config.settings import TWELVE_DATA_API_KEY, TIMEFRAME
+import yfinance as yf
 
-CACHE_DIR = Path(__file__).parent / "cache"
-CACHE_DIR.mkdir(exist_ok=True)
+SYMBOL_MAP = {
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/CHF": "USDCHF=X",
+    "USD/JPY": "USDJPY=X",
+    "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
+    "XAU/USD": "GC=F",
+    "XAG/USD": "SI=F",
+    "WTI/USD": "CL=F",
+    "BRENT/USD": "BZ=F",
+}
 
-BASE_URL = "https://api.twelvedata.com/time_series"
+# How many 1h bars to download for each interval
+_PERIOD = {
+    "1h":  "6mo",
+    "4h":  "6mo",
+    "1day": "2y",
+}
 
 
-def fetch_ohlcv(symbol: str, outputsize: int = 500, interval: str | None = None) -> pd.DataFrame:
-    tf = interval or TIMEFRAME
-    cache_file = CACHE_DIR / f"{symbol.replace('/', '_')}_{tf}.parquet"
+def fetch_ohlcv(symbol: str, interval: str = "4h", **kwargs) -> pd.DataFrame:
+    ticker = SYMBOL_MAP.get(symbol, symbol)
 
-    params = {
-        "symbol": symbol,
-        "interval": tf,
-        "outputsize": outputsize,
-        "apikey": TWELVE_DATA_API_KEY,
-        "format": "JSON",
-    }
-    resp = requests.get(BASE_URL, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    if interval == "4h":
+        raw = yf.download(ticker, period="6mo", interval="1h",
+                          auto_adjust=True, progress=False)
+        df = _resample_4h(raw)
+    else:
+        yf_interval = "1h" if interval == "1h" else "1d"
+        df = yf.download(ticker, period=_PERIOD.get(interval, "6mo"),
+                         interval=yf_interval, auto_adjust=True, progress=False)
+        df = _clean(df)
 
-    if "values" not in data:
-        raise ValueError(f"Bad response for {symbol}: {data.get('message')}")
+    if df.empty:
+        raise ValueError(f"No data for {symbol} ({ticker})")
 
-    df = pd.DataFrame(data["values"])
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df = df.set_index("datetime").sort_index()
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col])
-
-    df.to_parquet(cache_file)
     return df
 
 
-def load_cached(symbol: str) -> pd.DataFrame | None:
-    cache_file = CACHE_DIR / f"{symbol.replace('/', '_')}_{TIMEFRAME}.parquet"
-    if cache_file.exists():
-        return pd.read_parquet(cache_file)
-    return None
+def _resample_4h(df: pd.DataFrame) -> pd.DataFrame:
+    df = _clean(df)
+    return df.resample("4h").agg({
+        "open":  "first",
+        "high":  "max",
+        "low":   "min",
+        "close": "last",
+        "volume": "sum",
+    }).dropna()
+
+
+def _clean(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df.columns = [c.lower() for c in df.columns]
+    df.index = pd.to_datetime(df.index)
+    df = df[["open", "high", "low", "close", "volume"]].dropna()
+    return df

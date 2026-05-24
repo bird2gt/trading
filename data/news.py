@@ -11,7 +11,10 @@ RSS_FEEDS = [
 
 KEYWORDS = {
     "EUR/USD": ["euro", "eur", "ecb", "european central", "dollar", "usd", "fed ", "forex"],
-    "GBP/USD": ["pound", "gbp", "sterling", "bank of england", "boe", "dollar", "usd", "fed "],
+    "USD/CHF": ["swiss", "chf", "snb", "swiss national bank", "franc", "dollar", "usd"],
+    "BTC/USD": ["bitcoin", "btc", "crypto", "cryptocurrency", "coinbase", "binance", "etf"],
+    "XAU/USD": ["gold", "xau", "bullion", "precious metal", "inflation", "fed ", "dollar"],
+    "XAG/USD": ["silver", "xag", "precious metals"],
 }
 
 
@@ -32,7 +35,6 @@ def fetch_headlines(symbol: str, max_items: int = 15) -> list[str]:
         except Exception:
             continue
 
-    # if no keyword matches — return all recent headlines
     if not headlines:
         for url in RSS_FEEDS[:1]:
             try:

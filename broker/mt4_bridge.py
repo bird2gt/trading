@@ -46,5 +46,14 @@ def write_signal(symbol: str, action: str, lots: float = 0.01, sl: float = 0.0, 
     _write_signal_file(symbol, action, lots, sl, tp)
 
 
+@app.get("/balance")
+def get_balance():
+    path = MT4_FILES_DIR / "balance.txt"
+    try:
+        return {"balance": float(path.read_text().strip())}
+    except Exception:
+        return {"balance": None}
+
+
 def run_server(host: str = "0.0.0.0", port: int = 8000):
     uvicorn.run(app, host=host, port=port, log_level="warning")

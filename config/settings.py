@@ -6,7 +6,7 @@ load_dotenv()
 TWELVE_DATA_API_KEY = os.environ["TWELVE_DATA_API_KEY"]
 
 SYMBOLS = ["BTC/USDT"]
-FOREX_SYMBOLS = ["EUR/USD", "GBP/USD"]
+FOREX_SYMBOLS = ["EUR/USD", "USD/CHF", "BTC/USD", "XAU/USD"]
 TIMEFRAME = "1h"
 
 # Risk

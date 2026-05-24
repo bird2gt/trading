@@ -25,6 +25,14 @@ void OnTimer() {
     PartialClose();
     TrailOrders();
     ReadSignal();
+    WriteBalance();
+}
+
+void WriteBalance() {
+    int fh = FileOpen("balance.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh == INVALID_HANDLE) return;
+    FileWrite(fh, DoubleToString(AccountBalance(), 2));
+    FileClose(fh);
 }
 
 void OnTick() {}

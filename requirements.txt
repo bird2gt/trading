@@ -6,3 +6,4 @@ uvicorn
 python-dotenv
 anthropic
 feedparser
+yfinance
