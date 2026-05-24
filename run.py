@@ -1,6 +1,6 @@
 import time
 from config.settings import SYMBOLS
-from data.fetcher import fetch_ohlcv
+from history.fetcher import fetch_ohlcv
 from strategy.sma_cross import SMACross
 from broker import bybit_client
 from risk.manager import lot_size, is_drawdown_ok

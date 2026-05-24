@@ -3,10 +3,11 @@ import threading
 from datetime import date, datetime, timezone
 import requests
 import pandas as pd
-from data.fetcher import fetch_ohlcv
-from data.news import fetch_headlines
+from history.fetcher import fetch_ohlcv
+from history.news import fetch_headlines
 from strategy.sma_cross import SMACross
-from strategy.sentiment import analyze_sentiment
+from analytics.sentiment import analyze_sentiment
+from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
@@ -154,6 +155,14 @@ def trading_loop():
                     continue
                 if signal == -1 and sentiment == "bullish":
                     print(f"{symbol}: SELL blocked by bullish sentiment")
+                    continue
+
+                forecast = get_bias(symbol)
+                if signal == 1 and forecast == -1:
+                    print(f"{symbol}: BUY blocked by macro forecast")
+                    continue
+                if signal == -1 and forecast == 1:
+                    print(f"{symbol}: SELL blocked by macro forecast")
                     continue
 
                 action = "BUY" if signal == 1 else "SELL"

@@ -1,14 +1,21 @@
 #property strict
 #property description "Reads signal from file written by Python bridge"
 
-input double LotSize        = 0.01;
-input int    PollSeconds    = 5;
-input int    Slippage       = 3;
-input int    TrailPips      = 20;
-input int    TrailStartPips = 10;
+input double LotSize             = 0.01;
+input int    PollSeconds         = 5;
+input int    Slippage            = 3;
+// Breakeven (for calm pairs: EUR/USD, USD/CHF)
+input bool   UseBreakeven        = true;
+input double BreakevenATRMult    = 1.0;   // move SL to entry after X ATR profit
+// Chandelier trailing — H4 bar close only
+input int    ChandelierATRPeriod = 14;
+input double ChandelierATRMult   = 2.0;   // SL = highest_high - X*ATR
 
-string lastAction = "NONE";
-int    pipFactor  = 1;
+string   lastAction   = "NONE";
+int      pipFactor    = 1;
+datetime s_lastBarTime = 0;
+double   s_highestHigh = 0;
+double   s_lowestLow   = 0;
 
 
 int OnInit() {
@@ -17,22 +24,13 @@ int OnInit() {
     return INIT_SUCCEEDED;
 }
 
-void OnDeinit(const int reason) {
-    EventKillTimer();
-}
+void OnDeinit(const int reason) { EventKillTimer(); }
 
 void OnTimer() {
     PartialClose();
-    TrailOrders();
+    ChandelierTrail();
     ReadSignal();
     WriteBalance();
-}
-
-void WriteBalance() {
-    int fh = FileOpen("balance.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
-    if (fh == INVALID_HANDLE) return;
-    FileWrite(fh, DoubleToString(AccountBalance(), 2));
-    FileClose(fh);
 }
 
 void OnTick() {}
@@ -49,26 +47,26 @@ void ReadSignal() {
     FileClose(fh);
     if (StringLen(line) == 0) return;
 
-    // format: ACTION,lots,sl,tp1
     string parts[];
     int n = StringSplit(line, ',', parts);
 
     string action = parts[0];
-    double lots = (n > 1) ? StringToDouble(parts[1]) : LotSize;
-    double sl   = (n > 2) ? StringToDouble(parts[2]) : 0.0;
-    double tp1  = (n > 3) ? StringToDouble(parts[3]) : 0.0;
+    double lots   = (n > 1) ? StringToDouble(parts[1]) : LotSize;
+    double sl     = (n > 2) ? StringToDouble(parts[2]) : 0.0;
+    double tp1    = (n > 3) ? StringToDouble(parts[3]) : 0.0;
     if (lots <= 0) lots = LotSize;
 
     if (action == lastAction) return;
 
     if (action == "BUY") {
         CloseAll(OP_SELL);
-        if (CountOrders(OP_BUY) == 0) OpenOrder(OP_BUY, lots, sl, tp1);
+        if (CountOrders(OP_BUY) == 0) { _resetChandelier(); OpenOrder(OP_BUY, lots, sl, tp1); }
     } else if (action == "SELL") {
         CloseAll(OP_BUY);
-        if (CountOrders(OP_SELL) == 0) OpenOrder(OP_SELL, lots, sl, tp1);
+        if (CountOrders(OP_SELL) == 0) { _resetChandelier(); OpenOrder(OP_SELL, lots, sl, tp1); }
     } else if (action == "CLOSE") {
         CloseAll(-1);
+        _resetChandelier();
     }
 
     lastAction = action;
@@ -82,9 +80,9 @@ void PartialClose() {
     for (int i = OrdersTotal() - 1; i >= 0; i--) {
         if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
         if (OrderSymbol() != Symbol()) continue;
-        if (StringFind(OrderComment(), "SB_partial") >= 0) continue;  // already done
+        if (StringFind(OrderComment(), "SB_partial") >= 0) continue;
 
-        double tp  = OrderTakeProfit();
+        double tp = OrderTakeProfit();
         if (tp == 0) continue;
 
         bool hitTP1 = (OrderType() == OP_BUY  && Bid >= tp) ||
@@ -96,45 +94,74 @@ void PartialClose() {
 
         double price = (OrderType() == OP_BUY) ? Bid : Ask;
         if (OrderClose(OrderTicket(), halfLots, price, Slippage, clrGold)) {
-            // remove TP from remaining half — trailing takes over
             if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-                OrderModify(OrderTicket(), OrderOpenPrice(), OrderStopLoss(), 0,
-                            0, clrYellow);
-            Print("Partial close 50% at TP1=", tp, " — trailing takes over");
+                OrderModify(OrderTicket(), OrderOpenPrice(), OrderStopLoss(), 0, 0, clrYellow);
+            Print("Partial close 50% at TP1=", tp, " — chandelier takes over");
         }
     }
 }
 
 
-// ── trailing stop ──────────────────────────────────────────────────────────
+// ── chandelier trailing (H4 bar close) + breakeven (tick) ─────────────────
 
-void TrailOrders() {
-    double trail = TrailPips      * pipFactor * Point;
-    double start = TrailStartPips * pipFactor * Point;
+void ChandelierTrail() {
+    bool   hasOrders      = false;
+    double atr            = iATR(Symbol(), PERIOD_H4, ChandelierATRPeriod, 1);
+    datetime currentBar   = iTime(Symbol(), PERIOD_H4, 0);
+    bool   newBar         = (currentBar != s_lastBarTime);
+    if (newBar) s_lastBarTime = currentBar;
 
     for (int i = 0; i < OrdersTotal(); i++) {
         if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
         if (OrderSymbol() != Symbol()) continue;
-        if (OrderTakeProfit() != 0) continue;  // only trail after partial close
+        if (OrderTakeProfit() != 0) continue;  // only after partial close
+        hasOrders = true;
 
         if (OrderType() == OP_BUY) {
-            double profit = Bid - OrderOpenPrice();
-            if (profit < start) continue;
-            double newSL = Bid - trail;
+            // Breakeven: on tick, only while SL is still below entry
+            if (UseBreakeven && OrderStopLoss() < OrderOpenPrice() - Point) {
+                if (Bid >= OrderOpenPrice() + BreakevenATRMult * atr) {
+                    OrderModify(OrderTicket(), OrderOpenPrice(),
+                                NormalizeDouble(OrderOpenPrice(), Digits), 0, 0, clrGreen);
+                    Print("BUY breakeven → ", OrderOpenPrice());
+                }
+            }
+            // Chandelier: track highest H4 high, update SL only on bar close
+            if (!newBar) continue;
+            double high = iHigh(Symbol(), PERIOD_H4, 1);
+            if (s_highestHigh == 0) s_highestHigh = high;
+            if (high > s_highestHigh) s_highestHigh = high;
+            double newSL = NormalizeDouble(s_highestHigh - ChandelierATRMult * atr, Digits);
             if (newSL > OrderStopLoss() + Point)
-                OrderModify(OrderTicket(), OrderOpenPrice(),
-                            NormalizeDouble(newSL, Digits), 0, 0, clrYellow);
+                OrderModify(OrderTicket(), OrderOpenPrice(), newSL, 0, 0, clrYellow);
         }
 
         if (OrderType() == OP_SELL) {
-            double profit = OrderOpenPrice() - Ask;
-            if (profit < start) continue;
-            double newSL = Ask + trail;
+            // Breakeven: on tick, only while SL is still above entry
+            if (UseBreakeven && (OrderStopLoss() > OrderOpenPrice() + Point || OrderStopLoss() == 0)) {
+                if (Ask <= OrderOpenPrice() - BreakevenATRMult * atr) {
+                    OrderModify(OrderTicket(), OrderOpenPrice(),
+                                NormalizeDouble(OrderOpenPrice(), Digits), 0, 0, clrGreen);
+                    Print("SELL breakeven → ", OrderOpenPrice());
+                }
+            }
+            // Chandelier: track lowest H4 low, update SL only on bar close
+            if (!newBar) continue;
+            double low = iLow(Symbol(), PERIOD_H4, 1);
+            if (s_lowestLow == 0) s_lowestLow = low;
+            if (low < s_lowestLow) s_lowestLow = low;
+            double newSL = NormalizeDouble(s_lowestLow + ChandelierATRMult * atr, Digits);
             if (OrderStopLoss() == 0 || newSL < OrderStopLoss() - Point)
-                OrderModify(OrderTicket(), OrderOpenPrice(),
-                            NormalizeDouble(newSL, Digits), 0, 0, clrYellow);
+                OrderModify(OrderTicket(), OrderOpenPrice(), newSL, 0, 0, clrYellow);
         }
     }
+
+    if (!hasOrders) _resetChandelier();
+}
+
+void _resetChandelier() {
+    s_highestHigh = 0;
+    s_lowestLow   = 0;
 }
 
 

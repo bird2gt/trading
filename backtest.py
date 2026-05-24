@@ -1,6 +1,6 @@
 import time
 import pandas as pd
-from data.fetcher import fetch_ohlcv
+from history.fetcher import fetch_ohlcv
 from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout
 from strategy.mean_reversion import MeanReversion
