@@ -175,11 +175,13 @@ def run_digest() -> None:
                 model="claude-haiku-4-5-20251001",
                 max_tokens=300,
                 system=(
-                    "Ты макро-аналитик. Отвечай только на русском языке. "
-                    "Суммируй преобладающий взгляд аналитиков на инструмент в 3-5 предложениях. "
+                    "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. "
+                    "Ни одного слова по-английски. "
+                    "Ты макро-аналитик. Суммируй преобладающий взгляд аналитиков "
+                    "на инструмент в 3-5 предложениях. "
                     "Заканчивай строкой 'Bias: бычий/медвежий/нейтральный — причина'."
                 ),
-                messages=[{"role": "user", "content": f"Посты аналитиков по {topic}:\n\n{text}"}],
+                messages=[{"role": "user", "content": f"Посты аналитиков по {topic}:\n\n{text}\n\nОтвечай только на русском языке."}],
             )
             sections.append(f"## {topic}\n\n{resp.content[0].text.strip()}")
 
@@ -190,12 +192,13 @@ def run_digest() -> None:
             model="claude-haiku-4-5-20251001",
             max_tokens=400,
             system=(
-                "Ты геополитический макро-аналитик. Отвечай только на русском языке. "
+                "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Ни одного слова по-английски. "
+                "Ты геополитический макро-аналитик. "
                 "Суммируй ключевые политико-экономические темы из постов сегодня "
                 "и как они могут повлиять на USD, EUR, золото и крипту. "
                 "Указывай конкретное направление и механизм влияния."
             ),
-            messages=[{"role": "user", "content": f"Сегодняшние макро/политические посты:\n\n{text}"}],
+            messages=[{"role": "user", "content": f"Сегодняшние макро/политические посты:\n\n{text}\n\nОтвечай только на русском языке."}],
         )
         sections.append(f"## Макро и политический контекст\n\n{resp.content[0].text.strip()}")
 
@@ -239,11 +242,11 @@ def _entry_time(entry) -> datetime | None:
 
 def _save_digest(today: date, sections: list[str]) -> None:
     path = Path(__file__).parent.parent / "forecasts" / f"{today}_digest.md"
-    body = f"# Forecaster Digest — {today}\n\n" + "\n\n".join(sections)
+    body = f"# Дайджест прогнозистов — {today}\n\n" + "\n\n".join(sections)
     path.write_text(body, encoding="utf-8")
     print(f"Digest saved → {path}")
     _send_email(today, body)
-    _send_telegram(f"📊 *Forecaster Digest — {today}*\n\n" + "\n\n".join(sections))
+    _send_telegram(f"📊 *Дайджест прогнозистов — {today}*\n\n" + "\n\n".join(sections))
 
 
 def _send_email(today: date, body: str) -> None:
