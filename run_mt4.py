@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 from history.fetcher import fetch_ohlcv
 from history.news import fetch_headlines
+from history.calendar import is_high_impact_soon
 from strategy.sma_cross import SMACross
 from analytics.sentiment import analyze_sentiment
 from forecasts.reader import get_bias
@@ -103,7 +104,7 @@ def _atr(df: pd.DataFrame) -> float:
     return tr.rolling(ATR_PERIOD).mean().iloc[-1]
 
 
-def send_signal(td_symbol: str, action: str, df: pd.DataFrame):
+def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0):
     mt4_symbol = td_symbol.replace("/", "")
     entry = df["close"].iloc[-1]
     atr = _atr(df)
@@ -117,7 +118,7 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame):
     else:
         sl = tp1 = 0.0
 
-    lots = _calc_lots(entry, sl, td_symbol)
+    lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
     requests.post(f"{BRIDGE_URL}/signal", json={
         "symbol": mt4_symbol,
         "action": action,
@@ -126,7 +127,8 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame):
         "tp": tp1,
     }, timeout=3)
     _active_signals[td_symbol] = action
-    print(f"{td_symbol}: {action} | lots={lots} | SL={sl:.5f} TP1={tp1:.5f}")
+    size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
+    print(f"{td_symbol}: {action} | lots={lots}{size_note} | SL={sl:.5f} TP1={tp1:.5f}")
 
 
 def trading_loop():
@@ -146,16 +148,26 @@ def trading_loop():
                     print(f"{symbol}: no signal")
                     continue
 
-                headlines  = fetch_headlines(symbol)
-                sentiment  = analyze_sentiment(symbol, headlines)
-                print(f"{symbol}: signal={'BUY' if signal==1 else 'SELL'} | sentiment={sentiment}")
+                blocked, event_title = is_high_impact_soon(symbol)
+                if blocked:
+                    print(f"{symbol}: blocked — high-impact event: {event_title}")
+                    continue
 
-                if signal == 1 and sentiment == "bearish":
-                    print(f"{symbol}: BUY blocked by bearish sentiment")
+                headlines = fetch_headlines(symbol)
+                score     = analyze_sentiment(symbol, headlines)
+                action    = "BUY" if signal == 1 else "SELL"
+                print(f"{symbol}: {action} | sentiment score={score:+d}")
+
+                # strongly against → block
+                if signal == 1 and score == -2:
+                    print(f"{symbol}: BUY blocked — strongly bearish sentiment")
                     continue
-                if signal == -1 and sentiment == "bullish":
-                    print(f"{symbol}: SELL blocked by bullish sentiment")
+                if signal == -1 and score == 2:
+                    print(f"{symbol}: SELL blocked — strongly bullish sentiment")
                     continue
+
+                # mildly against → halve position size
+                size_mult = 0.5 if (signal == 1 and score == -1) or (signal == -1 and score == 1) else 1.0
 
                 forecast = get_bias(symbol)
                 if signal == 1 and forecast == -1:
@@ -165,12 +177,11 @@ def trading_loop():
                     print(f"{symbol}: SELL blocked by macro forecast")
                     continue
 
-                action = "BUY" if signal == 1 else "SELL"
                 if _correlated_conflict(symbol, action):
                     print(f"{symbol}: {action} blocked by correlation")
                     continue
 
-                send_signal(symbol, action, df_h4)
+                send_signal(symbol, action, df_h4, size_mult=size_mult)
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")
