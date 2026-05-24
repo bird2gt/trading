@@ -8,7 +8,7 @@ from strategy.mean_reversion import MeanReversion
 ATR_PERIOD   = 14
 ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5
-SYMBOLS      = ["BTC/USD", "XAU/USD", "EUR/USD", "USD/CHF"]
+SYMBOLS      = ["BTC/USD", "XAU/USD", "XAG/USD", "EUR/USD", "USD/CHF"]
 STRATEGIES   = {
     "SMA 10/30":    SMACross(fast=10, slow=30),
     "Breakout 20":  Breakout(period=20),

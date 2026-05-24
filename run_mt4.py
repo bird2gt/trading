@@ -36,7 +36,7 @@ ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
 
 STRATEGY = SMACross(fast=10, slow=30)
 
-CORR_GROUPS = [{"EUR/USD", "GBP/USD"}]
+CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
 _active_signals: dict[str, str] = {}  # symbol → "BUY" | "SELL"
 _day_start: dict = {"date": None, "balance": None}
 

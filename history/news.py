@@ -14,7 +14,7 @@ KEYWORDS = {
     "USD/CHF": ["swiss", "chf", "snb", "swiss national bank", "franc", "dollar", "usd"],
     "BTC/USD": ["bitcoin", "btc", "crypto", "cryptocurrency", "coinbase", "binance", "etf"],
     "XAU/USD": ["gold", "xau", "bullion", "precious metal", "inflation", "fed ", "dollar"],
-    "XAG/USD": ["silver", "xag", "precious metals"],
+    "XAG/USD": ["silver", "xag", "precious metals", "inflation", "fed ", "dollar", "gold", "bullion"],
 }
 
 
