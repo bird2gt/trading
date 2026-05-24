@@ -2,7 +2,7 @@ name: Daily Forecaster Digest
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # 9:00 Kyiv (UTC+3)
+    - cron: '0,30 6-20 * * *'  # every 30 min, 9:00–23:30 Kyiv (UTC+3)
   workflow_dispatch:       # manual trigger
 
 jobs:
