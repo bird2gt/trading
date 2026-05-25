@@ -32,6 +32,9 @@ _TWELVE_INTERVAL = {
 }
 
 
+_STALE_HOURS = {"1h": 2, "4h": 8, "1day": 48}
+
+
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
     for source in (_fetch_yahoo, _fetch_twelve):
@@ -45,7 +48,17 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
     if not frames:
         raise ValueError(f"No data for {symbol} from any source")
 
-    return _merge(frames).iloc[-outputsize:]
+    now = pd.Timestamp.utcnow().tz_localize(None)
+    result = _merge(frames).iloc[-outputsize:]
+    result = result[result.index <= now]
+
+    if not result.empty:
+        age_h = (now - result.index[-1]).total_seconds() / 3600
+        limit_h = _STALE_HOURS.get(interval, 8)
+        if age_h > limit_h:
+            raise ValueError(f"{symbol} {interval}: last bar {result.index[-1]} is {age_h:.1f}h old — data too stale")
+
+    return result
 
 
 def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
