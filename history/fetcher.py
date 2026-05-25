@@ -41,14 +41,12 @@ _ALPHA_FX_MAP = {
     "XAU/USD": ("XAU", "USD"),
     "XAG/USD": ("XAG", "USD"),
 }
-_alpha_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
-_ALPHA_CACHE_TTL = 3600  # re-fetch once per hour to stay within free-tier 25 req/day
+_alpha_cache: dict = {}
+_yahoo_cache: dict = {}
+_twelve_cache: dict = {}
 
-_yahoo_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
-_YAHOO_CACHE_TTL = 1800  # 30 min — avoids double-fetch between data check and trading loop
-
-_twelve_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
-_TWELVE_CACHE_TTL = 1800  # 30 min — same reason as Yahoo
+# Cache TTL = bar period: no new bar forms sooner, so no point fetching sooner
+_BAR_TTL = {"1h": 3600, "4h": 14400, "1day": 86400}
 
 # Finage: free tier 1000 req/month — only used for XAG/USD (no other source covers it)
 _FINAGE_MAP = {
@@ -100,7 +98,7 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
 def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     cache_key = (symbol, interval)
     cached = _yahoo_cache.get(cache_key)
-    if cached and time.time() - cached[1] < _YAHOO_CACHE_TTL:
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
         return cached[0]
 
     ticker = SYMBOL_MAP_YAHOO.get(symbol, symbol)
@@ -130,7 +128,7 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 
     cache_key = (symbol, interval)
     cached = _twelve_cache.get(cache_key)
-    if cached and time.time() - cached[1] < _TWELVE_CACHE_TTL:
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
         return cached[0]
 
     resp = requests.get(
@@ -168,7 +166,7 @@ def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 
     cache_key = (symbol, interval)
     cached = _alpha_cache.get(cache_key)
-    if cached and time.time() - cached[1] < _ALPHA_CACHE_TTL:
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
         return cached[0]
 
     if interval == "1day":
