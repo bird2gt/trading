@@ -47,6 +47,18 @@ _ALPHA_CACHE_TTL = 3600  # re-fetch once per hour to stay within free-tier 25 re
 _yahoo_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
 _YAHOO_CACHE_TTL = 1800  # 30 min — avoids double-fetch between data check and trading loop
 
+# Finage: free tier 250 req/day, covers XAG/USD and other metals
+_FINAGE_MAP = {
+    "EUR/USD": "EURUSD",
+    "GBP/USD": "GBPUSD",
+    "USD/CHF": "USDCHF",
+    "USD/JPY": "USDJPY",
+    "XAU/USD": "XAUUSD",
+    "XAG/USD": "XAGUSD",
+    "BTC/USD": "BTCUSD",
+}
+_FINAGE_TIMESPAN = {"1h": "hour", "4h": "hour", "1day": "day"}
+
 # Stooq: free, no key, CSV download
 _STOOQ_MAP = {
     "EUR/USD": "eurusd",
@@ -63,7 +75,7 @@ _STALE_HOURS = {"1h": 2, "4h": 8, "1day": 48}
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
-    for source in (_fetch_yahoo, _fetch_twelve, _fetch_alpha, _fetch_stooq):
+    for source in (_fetch_yahoo, _fetch_twelve, _fetch_alpha, _fetch_finage, _fetch_stooq):
         try:
             df = source(symbol, interval, outputsize)
             if not df.empty:
@@ -186,6 +198,42 @@ def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         df = _resample_4h(df)
 
     _alpha_cache[cache_key] = (df, time.time())
+    return df
+
+
+def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    api_key = os.environ.get("FINAGE_API_KEY", "")
+    if not api_key:
+        return pd.DataFrame()
+
+    ticker = _FINAGE_MAP.get(symbol)
+    timespan = _FINAGE_TIMESPAN.get(interval)
+    if ticker is None or timespan is None:
+        return pd.DataFrame()
+
+    multiplier = 4 if interval == "4h" else 1
+    now = pd.Timestamp.now('UTC')
+    from_date = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    to_date = now.strftime("%Y-%m-%d")
+
+    resp = requests.get(
+        f"https://api.finage.co.uk/agg/forex/{ticker}/{multiplier}/{timespan}/{from_date}/{to_date}",
+        params={"apikey": api_key},
+        timeout=15,
+    )
+    data = resp.json()
+    results = data.get("results") or []
+    if not results:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(results)
+    df.index = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert(None)
+    df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
+    df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
+
+    if interval == "4h" and multiplier == 1:
+        df = _resample_4h(df)
+
     return df
 
 
