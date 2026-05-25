@@ -50,17 +50,12 @@ _YAHOO_CACHE_TTL = 1800  # 30 min — avoids double-fetch between data check and
 _twelve_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
 _TWELVE_CACHE_TTL = 1800  # 30 min — same reason as Yahoo
 
-# Finage: free tier 250 req/day, covers XAG/USD and other metals
+# Finage: free tier 1000 req/month — only used for XAG/USD (no other source covers it)
 _FINAGE_MAP = {
-    "EUR/USD": "EURUSD",
-    "GBP/USD": "GBPUSD",
-    "USD/CHF": "USDCHF",
-    "USD/JPY": "USDJPY",
-    "XAU/USD": "XAUUSD",
     "XAG/USD": "XAGUSD",
-    "BTC/USD": "BTCUSD",
 }
-_FINAGE_TIMESPAN = {"1h": "hour", "4h": "hour", "1day": "day"}
+_finage_cache: dict = {}
+_FINAGE_CACHE_TTL = 14400  # 4 hours — matches bar period; ~12 req/day × 30 = 360/month
 
 # Stooq: free, no key, CSV download
 _STOOQ_MAP = {
@@ -217,8 +212,13 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     ticker = _FINAGE_MAP.get(symbol)
-    if ticker is None or interval not in _FINAGE_TIMESPAN:
+    if ticker is None:
         return pd.DataFrame()
+
+    cache_key = (symbol, interval)
+    cached = _finage_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _FINAGE_CACHE_TTL:
+        return cached[0]
 
     now = pd.Timestamp.now('UTC')
     from_date = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
@@ -248,6 +248,7 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
             "close": "last", "volume": "sum",
         }).dropna()
 
+    _finage_cache[cache_key] = (df, time.time())
     return df
 
 
