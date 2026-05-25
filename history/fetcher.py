@@ -1,5 +1,6 @@
 import os
 import time
+from io import StringIO
 import requests
 import pandas as pd
 import yfinance as yf
@@ -31,13 +32,35 @@ _TWELVE_INTERVAL = {
     "1day": "1day",
 }
 
+# Alpha Vantage: forex/metals pairs only (no crypto on free tier)
+_ALPHA_FX_MAP = {
+    "EUR/USD": ("EUR", "USD"),
+    "GBP/USD": ("GBP", "USD"),
+    "USD/CHF": ("USD", "CHF"),
+    "USD/JPY": ("USD", "JPY"),
+    "XAU/USD": ("XAU", "USD"),
+    "XAG/USD": ("XAG", "USD"),
+}
+_alpha_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
+_ALPHA_CACHE_TTL = 3600  # re-fetch once per hour to stay within free-tier 25 req/day
+
+# Stooq: free, no key, CSV download
+_STOOQ_MAP = {
+    "EUR/USD": "eurusd",
+    "GBP/USD": "gbpusd",
+    "USD/CHF": "usdchf",
+    "USD/JPY": "usdjpy",
+    "XAU/USD": "xauusd",
+    "XAG/USD": "xagusd",
+    "BTC/USD": "btcusd",
+}
 
 _STALE_HOURS = {"1h": 2, "4h": 8, "1day": 48}
 
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
-    for source in (_fetch_yahoo, _fetch_twelve):
+    for source in (_fetch_yahoo, _fetch_twelve, _fetch_alpha, _fetch_stooq):
         try:
             df = source(symbol, interval, outputsize)
             if not df.empty:
@@ -105,6 +128,97 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df = df.drop(columns=["datetime"])
     df = df.astype(float)
     return df.sort_index()
+
+
+def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+    if not api_key:
+        return pd.DataFrame()
+
+    pair = _ALPHA_FX_MAP.get(symbol)
+    if pair is None:
+        return pd.DataFrame()
+
+    cache_key = (symbol, interval)
+    cached = _alpha_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _ALPHA_CACHE_TTL:
+        return cached[0]
+
+    if interval == "1day":
+        function, av_interval = "FX_DAILY", None
+        ts_key = "Time Series FX (Daily)"
+    else:
+        function, av_interval = "FX_INTRADAY", "60min"
+        ts_key = "Time Series FX (60min)"
+
+    params = {
+        "function":    function,
+        "from_symbol": pair[0],
+        "to_symbol":   pair[1],
+        "outputsize":  "full",
+        "apikey":      api_key,
+    }
+    if av_interval:
+        params["interval"] = av_interval
+
+    resp = requests.get("https://www.alphavantage.co/query", params=params, timeout=15)
+    data = resp.json()
+    if ts_key not in data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data[ts_key]).T
+    df.index = pd.to_datetime(df.index)
+    df.columns = [c.split(". ", 1)[1] for c in df.columns]
+    df = df.astype(float).sort_index()
+    df["volume"] = 0.0
+
+    if interval == "4h":
+        df = _resample_4h(df)
+
+    _alpha_cache[cache_key] = (df, time.time())
+    return df
+
+
+def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    ticker = _STOOQ_MAP.get(symbol)
+    if ticker is None:
+        return pd.DataFrame()
+
+    stooq_i = {"1h": "h", "4h": "h", "1day": "d"}.get(interval)
+    if stooq_i is None:
+        return pd.DataFrame()
+
+    resp = requests.get(
+        "https://stooq.com/q/d/l/",
+        params={"s": ticker, "i": stooq_i},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return pd.DataFrame()
+
+    df = pd.read_csv(StringIO(resp.text))
+    if df.empty or "Open" not in df.columns:
+        return pd.DataFrame()
+
+    df.columns = [c.lower() for c in df.columns]
+    if "time" in df.columns:
+        df.index = pd.to_datetime(df["date"] + " " + df["time"])
+        df = df.drop(columns=["date", "time"])
+    else:
+        df.index = pd.to_datetime(df["date"])
+        df = df.drop(columns=["date"])
+
+    if "vol" in df.columns and "volume" not in df.columns:
+        df = df.rename(columns={"vol": "volume"})
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+
+    df = df[["open", "high", "low", "close", "volume"]].dropna().astype(float).sort_index()
+
+    if interval == "4h":
+        df = _resample_4h(df)
+
+    return df
 
 
 def _merge(frames: list[pd.DataFrame]) -> pd.DataFrame:
