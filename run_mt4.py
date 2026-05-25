@@ -208,10 +208,29 @@ def _clear_signal_files():
     print("Signal files cleared")
 
 
+def _data_check():
+    print("--- data check ---")
+    all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
+    ok = True
+    for symbol in all_symbols:
+        for interval in ("4h", "1day"):
+            try:
+                df = fetch_ohlcv(symbol, outputsize=5, interval=interval)
+                last = df.index[-1]
+                close = df["close"].iloc[-1]
+                age_h = (pd.Timestamp.utcnow() - last).total_seconds() / 3600
+                print(f"  {symbol} {interval}: last={last} close={close:.4f} age={age_h:.1f}h OK")
+            except Exception as e:
+                print(f"  {symbol} {interval}: FAIL — {e}")
+                ok = False
+    print(f"--- data check {'OK' if ok else 'FAILED'} ---")
+
+
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
     print(f"MT4 bridge running at {BRIDGE_URL}")
     print("Symbols:", ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS)
     time.sleep(1)  # wait for server to start
     _clear_signal_files()
+    _data_check()
     trading_loop()
