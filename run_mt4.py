@@ -137,6 +137,35 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     print(f"{td_symbol}: {action} | lots={lots}{size_note} | SL={sl:.5f} TP1={tp1:.5f}")
 
 
+def _send_close(symbol: str, reason: str):
+    mt4_symbol = symbol.replace("/", "")
+    try:
+        requests.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": "CLOSE",
+            "lots": 0.01, "sl": 0.0, "tp": 0.0,
+        }, timeout=3)
+        _active_signals[symbol] = "NONE"
+        print(f"{symbol}: CLOSE — {reason}")
+    except Exception as e:
+        print(f"{symbol}: failed to send CLOSE — {e}")
+
+
+def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
+    active = _active_signals.get(symbol)
+    if active not in ("BUY", "SELL"):
+        return False
+    close = df_1h["close"]
+    fast_ma = close.rolling(STRATEGY.fast).mean().iloc[-1]
+    slow_ma = close.rolling(STRATEGY.slow).mean().iloc[-1]
+    if active == "BUY" and fast_ma < slow_ma:
+        _send_close(symbol, "1h trend reversed bearish")
+        return True
+    if active == "SELL" and fast_ma > slow_ma:
+        _send_close(symbol, "1h trend reversed bullish")
+        return True
+    return False
+
+
 def trading_loop():
     while True:
         if _daily_drawdown_hit():
@@ -146,8 +175,13 @@ def trading_loop():
         print(f"Session symbols: {symbols}")
         for symbol in symbols:
             try:
+                df_1h = fetch_ohlcv(symbol, outputsize=50,  interval="1h")
                 df_h4 = fetch_ohlcv(symbol, outputsize=100, interval="4h")
                 df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
+
+                if _check_early_exit(symbol, df_1h):
+                    continue
+
                 signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
 
                 if signal == 0:
@@ -213,7 +247,7 @@ def _data_check():
     all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
     ok = True
     for symbol in all_symbols:
-        for interval in ("4h", "1day"):
+        for interval in ("1h", "4h", "1day"):
             try:
                 df = fetch_ohlcv(symbol, outputsize=5, interval=interval)
                 last = df.index[-1]
