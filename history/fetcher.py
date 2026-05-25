@@ -47,6 +47,9 @@ _ALPHA_CACHE_TTL = 3600  # re-fetch once per hour to stay within free-tier 25 re
 _yahoo_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
 _YAHOO_CACHE_TTL = 1800  # 30 min — avoids double-fetch between data check and trading loop
 
+_twelve_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
+_TWELVE_CACHE_TTL = 1800  # 30 min — same reason as Yahoo
+
 # Finage: free tier 250 req/day, covers XAG/USD and other metals
 _FINAGE_MAP = {
     "EUR/USD": "EURUSD",
@@ -130,6 +133,11 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
             _no_key_warned_at = time.time()
         return pd.DataFrame()
 
+    cache_key = (symbol, interval)
+    cached = _twelve_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _TWELVE_CACHE_TTL:
+        return cached[0]
+
     resp = requests.get(
         "https://api.twelvedata.com/time_series",
         params={
@@ -148,8 +156,10 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df = pd.DataFrame(data["values"])
     df.index = pd.to_datetime(df["datetime"]).dt.tz_localize(None)
     df = df.drop(columns=["datetime"])
-    df = df.astype(float)
-    return df.sort_index()
+    df = df.astype(float).sort_index()
+
+    _twelve_cache[cache_key] = (df, time.time())
+    return df
 
 
 def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
@@ -207,17 +217,16 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     ticker = _FINAGE_MAP.get(symbol)
-    timespan = _FINAGE_TIMESPAN.get(interval)
-    if ticker is None or timespan is None:
+    if ticker is None or interval not in _FINAGE_TIMESPAN:
         return pd.DataFrame()
 
-    multiplier = 4 if interval == "4h" else 1
     now = pd.Timestamp.now('UTC')
     from_date = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
-    to_date = now.strftime("%Y-%m-%d")
+    to_date = (now + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # Always fetch 1h bars — avoids bar-alignment gaps on session opens
     resp = requests.get(
-        f"https://api.finage.co.uk/agg/forex/{ticker}/{multiplier}/{timespan}/{from_date}/{to_date}",
+        f"https://api.finage.co.uk/agg/forex/{ticker}/1/hour/{from_date}/{to_date}",
         params={"apikey": api_key},
         timeout=15,
     )
@@ -231,8 +240,13 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
     df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
 
-    if interval == "4h" and multiplier == 1:
+    if interval == "4h":
         df = _resample_4h(df)
+    elif interval == "1day":
+        df = df.resample("1D").agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }).dropna()
 
     return df
 
