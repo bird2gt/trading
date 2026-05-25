@@ -11,6 +11,8 @@ POLL_INTERVAL = 60  # seconds
 
 def main():
     print("Starting live trading (Bybit Testnet)")
+    start_balance = bybit_client.get_balance("USDT")
+    print(f"Starting balance: {start_balance:.2f} USDT")
 
     while True:
         for symbol in SYMBOLS:
@@ -22,7 +24,7 @@ def main():
                 continue
 
             balance = bybit_client.get_balance("USDT")
-            if not is_drawdown_ok(balance, balance):
+            if not is_drawdown_ok(start_balance, balance):
                 print("Max drawdown reached, skipping")
                 continue
 
