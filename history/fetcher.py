@@ -44,6 +44,9 @@ _ALPHA_FX_MAP = {
 _alpha_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
 _ALPHA_CACHE_TTL = 3600  # re-fetch once per hour to stay within free-tier 25 req/day
 
+_yahoo_cache: dict = {}  # (symbol, interval) -> (df, fetched_at)
+_YAHOO_CACHE_TTL = 1800  # 30 min — avoids double-fetch between data check and trading loop
+
 # Stooq: free, no key, CSV download
 _STOOQ_MAP = {
     "EUR/USD": "eurusd",
@@ -85,6 +88,11 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
 
 
 def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    cache_key = (symbol, interval)
+    cached = _yahoo_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _YAHOO_CACHE_TTL:
+        return cached[0]
+
     ticker = SYMBOL_MAP_YAHOO.get(symbol, symbol)
 
     if interval == "4h":
@@ -97,6 +105,7 @@ def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
                          interval=yf_interval, auto_adjust=True, progress=False)
         df = _clean(df)
 
+    _yahoo_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -114,7 +123,8 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         params={
             "symbol":     symbol,
             "interval":   _TWELVE_INTERVAL.get(interval, interval),
-            "outputsize": min(outputsize, 5000),
+            "outputsize": 500,
+            "timezone":   "UTC",
             "apikey":     api_key,
         },
         timeout=15,
