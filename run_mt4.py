@@ -8,6 +8,7 @@ from history.news import fetch_headlines
 from history.calendar import is_high_impact_soon
 from strategy.sma_cross import SMACross
 from analytics.sentiment import analyze_sentiment
+from analytics.digest import run_digest
 from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
 
@@ -40,6 +41,7 @@ STRATEGY = SMACross(fast=10, slow=30)
 CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
 _active_signals: dict[str, str] = {}  # symbol → "BUY" | "SELL"
 _day_start: dict = {"date": None, "balance": None}
+_last_digest_date: date | None = None
 
 
 def _active_symbols() -> list[str]:
@@ -167,7 +169,13 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
 
 
 def trading_loop():
+    global _last_digest_date
     while True:
+        today = date.today()
+        if datetime.now(timezone.utc).hour == 7 and _last_digest_date != today:
+            _last_digest_date = today
+            threading.Thread(target=run_digest, daemon=True).start()
+
         if _daily_drawdown_hit():
             time.sleep(POLL_INTERVAL)
             continue

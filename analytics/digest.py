@@ -117,39 +117,18 @@ LOOKBACK  = 1    # days — only posts from the last 24 hours
 MAX_POSTS = 5    # posts per forecaster
 
 
-def _is_approved_today() -> bool:
-    """Return True if the user sent any message to the bot today after 06:00 UTC."""
-    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
-        return False
-    try:
-        resp = requests.get(
-            f"https://api.telegram.org/bot{token}/getUpdates",
-            params={"limit": 50, "allowed_updates": ["message"]},
-            timeout=10,
-        )
-        updates = resp.json().get("result", [])
-        cutoff_today = datetime.now(timezone.utc).replace(hour=6, minute=0, second=0, microsecond=0)
-        for upd in updates:
-            msg = upd.get("message", {})
-            if str(msg.get("chat", {}).get("id", "")) != str(chat_id):
-                continue
-            ts = msg.get("date", 0)
-            msg_time = datetime.fromtimestamp(ts, tz=timezone.utc)
-            if msg_time >= cutoff_today:
-                return True
-    except Exception:
-        pass
-    return False
+def _is_sent_today() -> bool:
+    """Return True if today's digest file already exists."""
+    path = Path(__file__).parent.parent / "forecasts" / f"{date.today()}_digest.md"
+    return path.exists()
 
 
 def run_digest() -> None:
     today  = date.today()
     cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK)
 
-    if _is_approved_today():
-        print("Digest: already approved by user today, skipping.")
+    if _is_sent_today():
+        print("Digest: already sent today, skipping.")
         return
 
     market_entries = _fetch_all(FORECASTERS, cutoff)
