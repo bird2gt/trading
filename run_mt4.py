@@ -218,7 +218,7 @@ def _data_check():
                 df = fetch_ohlcv(symbol, outputsize=5, interval=interval)
                 last = df.index[-1]
                 close = df["close"].iloc[-1]
-                age_h = (pd.Timestamp.utcnow() - last).total_seconds() / 3600
+                age_h = (pd.Timestamp.now('UTC').tz_convert(None) - last).total_seconds() / 3600
                 print(f"  {symbol} {interval}: last={last} close={close:.4f} age={age_h:.1f}h OK")
             except Exception as e:
                 print(f"  {symbol} {interval}: FAIL — {e}")

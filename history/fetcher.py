@@ -71,7 +71,7 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
     if not frames:
         raise ValueError(f"No data for {symbol} from any source")
 
-    now = pd.Timestamp.utcnow().tz_localize(None)
+    now = pd.Timestamp.now('UTC').tz_convert(None)
     result = _merge(frames).iloc[-outputsize:]
     result = result[result.index <= now]
 
@@ -263,5 +263,6 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df.columns = [c.lower() for c in df.columns]
-    df.index = pd.to_datetime(df.index).tz_localize(None)
+    idx = pd.to_datetime(df.index)
+    df.index = idx.tz_convert(None) if idx.tz is not None else idx
     return df[["open", "high", "low", "close", "volume"]].dropna()
