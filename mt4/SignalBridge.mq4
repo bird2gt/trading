@@ -165,6 +165,16 @@ void _resetChandelier() {
 }
 
 
+// ── balance writer ─────────────────────────────────────────────────────────
+
+void WriteBalance() {
+    int fh = FileOpen("balance.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh == INVALID_HANDLE) return;
+    FileWriteString(fh, DoubleToString(AccountBalance(), 2));
+    FileClose(fh);
+}
+
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 void OpenOrder(int type, double lots, double sl, double tp) {

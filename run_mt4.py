@@ -50,7 +50,11 @@ def _active_symbols() -> list[str]:
 
 def _daily_drawdown_hit() -> bool:
     today = date.today()
-    balance = _get_balance()
+    try:
+        balance = _get_balance()
+    except RuntimeError as e:
+        print(f"[WARN] drawdown check skipped: {e}")
+        return False
     if _day_start["date"] != today:
         _day_start["date"] = today
         _day_start["balance"] = balance
@@ -80,9 +84,11 @@ def _get_balance() -> float:
     try:
         resp = requests.get(f"{BRIDGE_URL}/balance", timeout=3)
         bal = resp.json().get("balance")
-        return float(bal) if bal else 4000.0
-    except Exception:
-        return 4000.0
+    except Exception as e:
+        raise RuntimeError(f"balance unavailable: {e}") from e
+    if bal is None:
+        raise RuntimeError("balance endpoint returned null — balance.txt missing or MT4 not running")
+    return float(bal)
 
 
 def _calc_lots(entry: float, sl: float, symbol: str) -> float:
