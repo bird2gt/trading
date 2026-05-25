@@ -172,7 +172,7 @@ def trading_loop():
     global _last_digest_date
     while True:
         today = date.today()
-        if datetime.now(timezone.utc).hour == 7 and _last_digest_date != today:
+        if datetime.now(timezone.utc).hour == 6 and _last_digest_date != today:
             _last_digest_date = today
             threading.Thread(target=run_digest, daemon=True).start()
 
