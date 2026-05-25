@@ -172,6 +172,17 @@ void WriteBalance() {
     if (fh == INVALID_HANDLE) return;
     FileWriteString(fh, DoubleToString(AccountBalance(), 2));
     FileClose(fh);
+
+    int fh2 = FileOpen("account_info.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh2 == INVALID_HANDLE) return;
+    FileWriteString(fh2,
+        "balance="  + DoubleToString(AccountBalance(), 2)  + "\n" +
+        "equity="   + DoubleToString(AccountEquity(), 2)   + "\n" +
+        "leverage="  + IntegerToString(AccountLeverage())   + "\n" +
+        "currency=" + AccountCurrency()                     + "\n" +
+        "broker="   + AccountCompany()                      + "\n"
+    );
+    FileClose(fh2);
 }
 
 

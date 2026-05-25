@@ -55,5 +55,21 @@ def get_balance():
         return {"balance": None}
 
 
+@app.get("/account")
+def get_account():
+    path = MT4_FILES_DIR / "account_info.txt"
+    try:
+        info = {}
+        for line in path.read_text().strip().splitlines():
+            k, v = line.split("=", 1)
+            info[k] = v
+        info["balance"] = float(info["balance"])
+        info["equity"]  = float(info["equity"])
+        info["leverage"] = int(info["leverage"])
+        return info
+    except Exception:
+        return {}
+
+
 def run_server(host: str = "0.0.0.0", port: int = 8000):
     uvicorn.run(app, host=host, port=port, log_level="warning")
