@@ -9,6 +9,7 @@ from history.calendar import is_high_impact_soon
 from strategy.sma_cross import SMACross
 from analytics.sentiment import analyze_sentiment
 from analytics.digest import run_digest
+from analytics.journal import sync as journal_sync, stats as journal_stats
 from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
 
@@ -42,6 +43,7 @@ CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
 _active_signals: dict[str, str] = {}  # symbol → "BUY" | "SELL"
 _day_start: dict = {"date": None, "balance": None}
 _last_digest_date: date | None = None
+_last_journal_sync: float = 0.0
 
 
 def _active_symbols() -> list[str]:
@@ -169,12 +171,16 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
 
 
 def trading_loop():
-    global _last_digest_date
+    global _last_digest_date, _last_journal_sync
     while True:
         today = date.today()
         if datetime.now(timezone.utc).hour == 6 and _last_digest_date != today:
             _last_digest_date = today
             threading.Thread(target=run_digest, daemon=True).start()
+
+        if time.time() - _last_journal_sync >= 3600:
+            journal_sync()
+            _last_journal_sync = time.time()
 
         if _daily_drawdown_hit():
             time.sleep(POLL_INTERVAL)
@@ -275,4 +281,6 @@ if __name__ == "__main__":
     time.sleep(1)  # wait for server to start
     _clear_signal_files()
     _data_check()
+    journal_sync()
+    journal_stats()
     trading_loop()

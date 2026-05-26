@@ -1,6 +1,7 @@
 from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel
+import csv
 import uvicorn
 
 app = FastAPI()
@@ -69,6 +70,19 @@ def get_account():
         return info
     except Exception:
         return {}
+
+
+@app.get("/trades")
+def get_trades():
+    rows = []
+    for path in MT4_FILES_DIR.glob("trades_*.csv"):
+        try:
+            with path.open(encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows.extend(list(reader))
+        except Exception:
+            pass
+    return rows
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):
