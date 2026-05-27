@@ -1,12 +1,14 @@
 import time
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 import requests
 import pandas as pd
 from history.fetcher import fetch_ohlcv
 from history.news import fetch_headlines
 from history.calendar import is_high_impact_soon
 from strategy.sma_cross import SMACross
+from strategy.breakout import Breakout
+from strategy.structure import market_structure, fib_tp
 from analytics.sentiment import analyze_sentiment
 from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
@@ -22,22 +24,28 @@ MAX_LOTS = 1.0
 # pip_size = price per 1 pip; pip_value = USD per pip per standard lot
 PIP_CONFIG = {
     "EUR/USD": {"pip_size": 0.0001, "pip_value": 10.0},
+    "GBP/USD": {"pip_size": 0.0001, "pip_value": 10.0},
     "USD/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
+    "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
     "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
     "XAG/USD": {"pip_size": 0.001,  "pip_value": 5.0},
 }
 
-# UTC hours: 00-07 and 22-23 → Asian session
-ALWAYS_SYMBOLS = ["BTC/USD"]
+# Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
+ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]
-LONDON_SYMBOLS = ["EUR/USD", "USD/CHF"]
-POLL_INTERVAL = 300    # 5 minutes
+LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF"]
+US_SYMBOLS     = ["XAU/USD"]  # gold active during full US session
+POLL_INTERVAL      = 300  # 5 minutes default
+POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
 ATR_PERIOD = 14
 ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
+ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
 
-STRATEGY = SMACross(fast=10, slow=30)
+STRATEGY = SMACross(fast=5, slow=20, crossover_window=5)
+BREAKOUT_STRATEGY = Breakout(period=8)  # 8 × 15min = 2h pre-news range
 
 CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
 _active_signals: dict[str, str] = {}  # symbol → "BUY" | "SELL"
@@ -47,8 +55,14 @@ _last_journal_sync: float = 0.0
 
 
 def _active_symbols() -> list[str]:
-    hour = datetime.now(timezone.utc).hour
-    session = ASIAN_SYMBOLS if (hour < 8 or hour >= 22) else LONDON_SYMBOLS
+    now = datetime.now(timezone.utc)
+    hour, minute = now.hour, now.minute
+    if hour < 8 or hour >= 22:
+        session = ASIAN_SYMBOLS                          # 22:00-08:00: XAU, XAG
+    elif hour > 12 or (hour == 12 and minute >= 30):
+        session = LONDON_SYMBOLS + US_SYMBOLS            # 12:30-21:00: EUR, GBP, CHF + XAU
+    else:
+        session = LONDON_SYMBOLS                         # 08:00-12:30: EUR, GBP, CHF
     return ALWAYS_SYMBOLS + session
 
 
@@ -114,17 +128,19 @@ def _atr(df: pd.DataFrame) -> float:
     return tr.rolling(ATR_PERIOD).mean().iloc[-1]
 
 
-def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0):
+def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0,
+                sl_mult: float = ATR_SL_MULT, tp_mult: float = ATR_TP1_MULT,
+                tp_price: float | None = None):
     mt4_symbol = td_symbol.replace("/", "")
     entry = df["close"].iloc[-1]
     atr = _atr(df)
 
     if action == "BUY":
-        sl  = round(entry - ATR_SL_MULT  * atr, 5)
-        tp1 = round(entry + ATR_TP1_MULT * atr, 5)
+        sl  = round(entry - sl_mult * atr, 5)
+        tp1 = tp_price if tp_price is not None else round(entry + tp_mult * atr, 5)
     elif action == "SELL":
-        sl  = round(entry + ATR_SL_MULT  * atr, 5)
-        tp1 = round(entry - ATR_TP1_MULT * atr, 5)
+        sl  = round(entry + sl_mult * atr, 5)
+        tp1 = tp_price if tp_price is not None else round(entry - tp_mult * atr, 5)
     else:
         sl = tp1 = 0.0
 
@@ -138,7 +154,8 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     }, timeout=3)
     _active_signals[td_symbol] = action
     size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
-    print(f"{td_symbol}: {action} | lots={lots}{size_note} | SL={sl:.5f} TP1={tp1:.5f}")
+    tp_note = " [fib]" if tp_price is not None else ""
+    print(f"{td_symbol}: {action} | lots={lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
 
 
 def _send_close(symbol: str, reason: str):
@@ -170,9 +187,25 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
     return False
 
 
+def _sleep_until_open():
+    """If outside trading hours (08:00–21:00 UTC), sleep until 08:00 UTC."""
+    now = datetime.now(timezone.utc)
+    if 8 <= now.hour < 21:
+        return
+    if now.hour < 8:
+        wake = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    else:
+        wake = (now + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    secs = (wake - now).total_seconds()
+    print(f"Outside trading hours — sleeping {secs/3600:.1f}h until {wake.strftime('%H:%M UTC')}")
+    time.sleep(secs)
+
+
 def trading_loop():
     global _last_digest_date, _last_journal_sync
     while True:
+        _sleep_until_open()
+
         today = date.today()
         if datetime.now(timezone.utc).hour == 6 and _last_digest_date != today:
             _last_digest_date = today
@@ -183,24 +216,51 @@ def trading_loop():
             _last_journal_sync = time.time()
 
         if _daily_drawdown_hit():
-            time.sleep(POLL_INTERVAL)
+            now_utc = datetime.now(timezone.utc)
+            in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
+            time.sleep(POLL_INTERVAL_NEWS if in_news_window else POLL_INTERVAL)
             continue
+        now_utc = datetime.now(timezone.utc)
+        in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
+
         symbols = _active_symbols()
-        print(f"Session symbols: {symbols}")
+        mode = "BREAKOUT/M15" if in_news_window else "SMA/H4"
+        print(f"Session symbols: {symbols} [{mode}]")
         for symbol in symbols:
             try:
-                df_1h = fetch_ohlcv(symbol, outputsize=50,  interval="1h")
-                df_h4 = fetch_ohlcv(symbol, outputsize=100, interval="4h")
-                df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
+                df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
 
                 if _check_early_exit(symbol, df_1h):
                     continue
 
-                signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
+                if in_news_window:
+                    df_signal = fetch_ohlcv(symbol, outputsize=20, interval="15min")
+                    signal = BREAKOUT_STRATEGY.generate_signal(df_signal)
+                    sl_mult = tp_mult = ATR_BREAKOUT_MULT
+                    tp_price = None
+                else:
+                    df_h4 = fetch_ohlcv(symbol, outputsize=220, interval="4h")
+                    df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
+                    df_signal = df_h4
+                    signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
+                    sl_mult = ATR_SL_MULT
+                    tp_mult = ATR_TP1_MULT
+                    tp_price = None
 
                 if signal == 0:
                     print(f"{symbol}: no signal")
                     continue
+
+                # market structure filter (SMA mode only)
+                if not in_news_window:
+                    struct = market_structure(df_h4)
+                    if signal == 1 and struct == -1:
+                        print(f"{symbol}: BUY blocked — bearish structure (LH/LL)")
+                        continue
+                    if signal == -1 and struct == 1:
+                        print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
+                        continue
+                    tp_price = fib_tp(df_h4, signal)
 
                 blocked, event_title = is_high_impact_soon(symbol)
                 if blocked:
@@ -235,11 +295,14 @@ def trading_loop():
                     print(f"{symbol}: {action} blocked by correlation")
                     continue
 
-                send_signal(symbol, action, df_h4, size_mult=size_mult)
+                send_signal(symbol, action, df_signal, size_mult=size_mult,
+                            sl_mult=sl_mult, tp_mult=tp_mult, tp_price=tp_price)
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")
-        time.sleep(POLL_INTERVAL)
+        interval = POLL_INTERVAL_NEWS if in_news_window else POLL_INTERVAL
+        print(f"Next poll in {interval}s {'[US news window]' if in_news_window else ''}")
+        time.sleep(interval)
 
 
 def _clear_signal_files():

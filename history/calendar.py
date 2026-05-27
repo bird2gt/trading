@@ -21,6 +21,7 @@ _CURRENCIES = {
     "GBP/USD": {"GBP", "USD"},
     "USD/JPY": {"USD", "JPY"},
     "BTC/USD": {"USD"},
+    "ETH/USD": {"USD"},
     "XAU/USD": {"USD"},
     "XAG/USD": {"USD"},
 }

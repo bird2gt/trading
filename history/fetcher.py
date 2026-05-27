@@ -4,6 +4,9 @@ from io import StringIO
 import requests
 import pandas as pd
 import yfinance as yf
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _no_key_warned_at: float = 0
 
@@ -21,15 +24,17 @@ SYMBOL_MAP_YAHOO = {
 }
 
 _YAHOO_PERIOD = {
-    "1h":   "6mo",
-    "4h":   "6mo",
-    "1day": "2y",
+    "15min": "60d",
+    "1h":    "6mo",
+    "4h":    "6mo",
+    "1day":  "2y",
 }
 
 _TWELVE_INTERVAL = {
-    "1h":   "1h",
-    "4h":   "4h",
-    "1day": "1day",
+    "15min": "15min",
+    "1h":    "1h",
+    "4h":    "4h",
+    "1day":  "1day",
 }
 
 # Alpha Vantage: forex/metals pairs only (no crypto on free tier)
@@ -46,7 +51,7 @@ _yahoo_cache: dict = {}
 _twelve_cache: dict = {}
 
 # Cache TTL = bar period: no new bar forms sooner, so no point fetching sooner
-_BAR_TTL = {"1h": 3600, "4h": 14400, "1day": 86400}
+_BAR_TTL = {"15min": 900, "1h": 3600, "4h": 14400, "1day": 86400}
 
 # Finage: free tier 1000 req/month — only used for XAG/USD (no other source covers it)
 _FINAGE_MAP = {
@@ -66,7 +71,7 @@ _STOOQ_MAP = {
     "BTC/USD": "btcusd",
 }
 
-_STALE_HOURS = {"1h": 2, "4h": 8, "1day": 48}
+_STALE_HOURS = {"15min": 1, "1h": 2, "4h": 8, "1day": 48}
 
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
@@ -107,6 +112,10 @@ def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         raw = yf.download(ticker, period="6mo", interval="1h",
                           auto_adjust=True, progress=False)
         df = _resample_4h(raw)
+    elif interval == "15min":
+        df = yf.download(ticker, period="60d", interval="15m",
+                         auto_adjust=True, progress=False)
+        df = _clean(df)
     else:
         yf_interval = "1h" if interval == "1h" else "1d"
         df = yf.download(ticker, period=_YAHOO_PERIOD.get(interval, "6mo"),
@@ -158,6 +167,9 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
     if not api_key:
+        return pd.DataFrame()
+
+    if interval not in ("1h", "1day"):
         return pd.DataFrame()
 
     pair = _ALPHA_FX_MAP.get(symbol)
