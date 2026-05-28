@@ -239,8 +239,6 @@ def _sleep_until_open():
 def trading_loop():
     global _last_digest_date, _last_calendar_date, _last_journal_sync
     while True:
-        _sleep_until_open()
-
         today = date.today()
         if datetime.now(timezone.utc).hour == 5 and _last_calendar_date != today:
             _last_calendar_date = today
@@ -254,22 +252,21 @@ def trading_loop():
             journal_sync()
             _last_journal_sync = time.time()
 
-        if _daily_drawdown_hit():
-            now_utc = datetime.now(timezone.utc)
-            in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
-            time.sleep(POLL_INTERVAL_NEWS if in_news_window else POLL_INTERVAL)
-            continue
+        drawdown_hit = _daily_drawdown_hit()
         now_utc = datetime.now(timezone.utc)
         in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
 
         symbols = _active_symbols()
         mode = "BREAKOUT/M15" if in_news_window else "SMA/H4"
-        print(f"Session symbols: {symbols} [{mode}]")
+        print(f"Session symbols: {symbols} [{mode}]{' [drawdown: new entries blocked]' if drawdown_hit else ''}")
         for symbol in symbols:
             try:
                 df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
 
                 if _check_early_exit(symbol, df_1h):
+                    continue
+
+                if drawdown_hit:
                     continue
 
                 if in_news_window:
