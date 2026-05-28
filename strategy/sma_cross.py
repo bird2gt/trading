@@ -3,11 +3,10 @@ from .base import BaseStrategy
 
 
 class SMACross(BaseStrategy):
-    def __init__(self, fast: int = 20, slow: int = 50, rsi_period: int = 14, crossover_window: int = 1):
+    def __init__(self, fast: int = 20, slow: int = 50, rsi_period: int = 14):
         self.fast = fast
         self.slow = slow
         self.rsi_period = rsi_period
-        self.crossover_window = crossover_window
 
     def generate_signal(self, df: pd.DataFrame, df_trend: pd.DataFrame | None = None) -> int:
         close = df["close"]
@@ -15,11 +14,9 @@ class SMACross(BaseStrategy):
         slow_ma = close.rolling(self.slow).mean()
         rsi = self._rsi(close)
 
-        w = self.crossover_window
-        bullish_now = fast_ma.iloc[-1] > slow_ma.iloc[-1]
-        bullish_ago = fast_ma.iloc[-1 - w] > slow_ma.iloc[-1 - w]
-        crossed_up = bullish_now and not bullish_ago
-        crossed_dn = not bullish_now and bullish_ago
+        bullish = fast_ma.iloc[-1] > slow_ma.iloc[-1]
+        crossed_up = bullish
+        crossed_dn = not bullish
 
         if self._adx(df) < 20:
             return 0
@@ -29,9 +26,9 @@ class SMACross(BaseStrategy):
         ma200 = close.rolling(200).mean().iloc[-1]
         above_ma200 = close.iloc[-1] > ma200
 
-        if crossed_up and rsi.iloc[-1] < 65 and trend >= 0 and above_ma200:
+        if crossed_up and trend >= 0 and above_ma200:
             return 1
-        if crossed_dn and rsi.iloc[-1] > 35 and trend <= 0 and not above_ma200:
+        if crossed_dn and trend <= 0 and not above_ma200:
             return -1
         return 0
 

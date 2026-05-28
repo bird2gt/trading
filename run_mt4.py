@@ -44,7 +44,7 @@ ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
 ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
 
-STRATEGY = SMACross(fast=5, slow=20, crossover_window=5)
+STRATEGY = SMACross(fast=5, slow=20)
 BREAKOUT_STRATEGY = Breakout(period=8)  # 8 × 15min = 2h pre-news range
 
 CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
@@ -267,9 +267,13 @@ def trading_loop():
                     print(f"{symbol}: blocked — high-impact event: {event_title}")
                     continue
 
+                action = "BUY" if signal == 1 else "SELL"
+                if _active_signals.get(symbol) == action:
+                    print(f"{symbol}: {action} уже активен — пропуск")
+                    continue
+
                 headlines = fetch_headlines(symbol)
                 score     = analyze_sentiment(symbol, headlines)
-                action    = "BUY" if signal == 1 else "SELL"
                 print(f"{symbol}: {action} | sentiment score={score:+d}")
 
                 # strongly against → block
