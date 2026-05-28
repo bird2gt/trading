@@ -18,6 +18,7 @@ import requests
 import feedparser
 import anthropic
 from dotenv import load_dotenv
+from history.calendar import get_today_events
 load_dotenv()
 
 # ── Market forecasters (12) ────────────────────────────────────────────────
@@ -180,6 +181,11 @@ def run_digest() -> None:
             messages=[{"role": "user", "content": f"Сегодняшние макро/политические посты:\n\n{text}\n\nОтвечай только на русском языке."}],
         )
         sections.append(f"## Макро и политический контекст\n\n{resp.content[0].text.strip()}")
+
+    # Prepend economic calendar
+    calendar_text = get_today_events(min_impact="Medium")
+    if calendar_text:
+        sections.insert(0, f"## 📅 Экономический календарь\n\n{calendar_text}")
 
     _save_digest(today, sections)
     _send_telegram("✅ Дайджест отправлен. Ответь любым сообщением — подтверди что прочитал.")

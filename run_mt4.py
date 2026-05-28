@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 from history.fetcher import fetch_ohlcv
 from history.news import fetch_headlines
-from history.calendar import is_high_impact_soon
+from history.calendar import is_high_impact_soon, send_calendar_to_telegram
 from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout
 from strategy.structure import market_structure, fib_tp
@@ -26,6 +26,7 @@ PIP_CONFIG = {
     "EUR/USD": {"pip_size": 0.0001, "pip_value": 10.0},
     "GBP/USD": {"pip_size": 0.0001, "pip_value": 10.0},
     "USD/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
+    "EUR/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
     "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
     "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
@@ -35,7 +36,7 @@ PIP_CONFIG = {
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]
-LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF"]
+LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF"]
 US_SYMBOLS     = ["XAU/USD"]  # gold active during full US session
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
@@ -47,10 +48,17 @@ ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
 STRATEGY = SMACross(fast=5, slow=20)
 BREAKOUT_STRATEGY = Breakout(period=8)  # 8 × 15min = 2h pre-news range
 
-CORR_GROUPS = [{"EUR/USD", "GBP/USD"}, {"XAU/USD", "XAG/USD"}]
-_active_signals: dict[str, str] = {}  # symbol → "BUY" | "SELL"
+CORR_GROUPS = [
+    {"EUR/USD", "GBP/USD"},        # EUR и GBP коррелируют
+    {"XAU/USD", "XAG/USD"},        # золото и серебро коррелируют
+    {"EUR/USD", "USD/CHF"},        # оба = ставка на USD (разные стороны)
+    {"GBP/USD", "USD/CHF"},        # то же
+]
+_active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
+_entry_prices: dict[str, float] = {}   # symbol → entry price
 _day_start: dict = {"date": None, "balance": None}
 _last_digest_date: date | None = None
+_last_calendar_date: date | None = None
 _last_journal_sync: float = 0.0
 
 
@@ -130,7 +138,7 @@ def _atr(df: pd.DataFrame) -> float:
 
 def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0,
                 sl_mult: float = ATR_SL_MULT, tp_mult: float = ATR_TP1_MULT,
-                tp_price: float | None = None):
+                tp_price: float | None = None, tp2_price: float | None = None):
     mt4_symbol = td_symbol.replace("/", "")
     entry = df["close"].iloc[-1]
     atr = _atr(df)
@@ -144,18 +152,32 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     else:
         sl = tp1 = 0.0
 
-    lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
-    requests.post(f"{BRIDGE_URL}/signal", json={
-        "symbol": mt4_symbol,
-        "action": action,
-        "lots": lots,
-        "sl": sl,
-        "tp": tp1,
-    }, timeout=3)
-    _active_signals[td_symbol] = action
+    base_lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
     size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
-    tp_note = " [fib]" if tp_price is not None else ""
-    print(f"{td_symbol}: {action} | lots={lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
+
+    if tp2_price is not None:
+        lots1 = max(MIN_LOTS, round(base_lots * 0.5, 2))
+        lots2 = max(MIN_LOTS, round(base_lots * 0.5, 2))
+        requests.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": action,
+            "lots": lots1, "sl": sl, "tp": tp1,
+        }, timeout=3)
+        requests.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": action,
+            "lots": lots2, "sl": sl, "tp": tp2_price,
+        }, timeout=3)
+        _active_signals[td_symbol] = action
+        _entry_prices[td_symbol] = entry
+        print(f"{td_symbol}: {action} | lots={lots1}+{lots2}{size_note} | SL={sl:.5f} TP1={tp1:.5f} TP2={tp2_price:.5f} [fib 127/161]")
+    else:
+        requests.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": action,
+            "lots": base_lots, "sl": sl, "tp": tp1,
+        }, timeout=3)
+        _active_signals[td_symbol] = action
+        _entry_prices[td_symbol] = entry
+        tp_note = " [fib]" if tp_price is not None else ""
+        print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
 
 
 def _send_close(symbol: str, reason: str):
@@ -166,6 +188,7 @@ def _send_close(symbol: str, reason: str):
             "lots": 0.01, "sl": 0.0, "tp": 0.0,
         }, timeout=3)
         _active_signals[symbol] = "NONE"
+        _entry_prices.pop(symbol, None)
         print(f"{symbol}: CLOSE — {reason}")
     except Exception as e:
         print(f"{symbol}: failed to send CLOSE — {e}")
@@ -175,6 +198,18 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
     active = _active_signals.get(symbol)
     if active not in ("BUY", "SELL"):
         return False
+
+    current = df_1h["close"].iloc[-1]
+    entry = _entry_prices.get(symbol)
+    if entry is not None:
+        atr = _atr(df_1h)
+        if active == "SELL" and current > entry + 1.0 * atr:
+            _send_close(symbol, f"impulse against SELL >1 ATR (entry={entry:.5f} atr={atr:.5f})")
+            return True
+        if active == "BUY" and current < entry - 1.0 * atr:
+            _send_close(symbol, f"impulse against BUY >1 ATR (entry={entry:.5f} atr={atr:.5f})")
+            return True
+
     close = df_1h["close"]
     fast_ma = close.rolling(STRATEGY.fast).mean().iloc[-1]
     slow_ma = close.rolling(STRATEGY.slow).mean().iloc[-1]
@@ -202,11 +237,15 @@ def _sleep_until_open():
 
 
 def trading_loop():
-    global _last_digest_date, _last_journal_sync
+    global _last_digest_date, _last_calendar_date, _last_journal_sync
     while True:
         _sleep_until_open()
 
         today = date.today()
+        if datetime.now(timezone.utc).hour == 5 and _last_calendar_date != today:
+            _last_calendar_date = today
+            threading.Thread(target=send_calendar_to_telegram, daemon=True).start()
+
         if datetime.now(timezone.utc).hour == 6 and _last_digest_date != today:
             _last_digest_date = today
             threading.Thread(target=run_digest, daemon=True).start()
@@ -238,6 +277,7 @@ def trading_loop():
                     signal = BREAKOUT_STRATEGY.generate_signal(df_signal)
                     sl_mult = tp_mult = ATR_BREAKOUT_MULT
                     tp_price = None
+                    tp2_price = None
                 else:
                     df_h4 = fetch_ohlcv(symbol, outputsize=220, interval="4h")
                     df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
@@ -246,6 +286,7 @@ def trading_loop():
                     sl_mult = ATR_SL_MULT
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
+                    tp2_price = None
 
                 if signal == 0:
                     print(f"{symbol}: no signal")
@@ -260,7 +301,8 @@ def trading_loop():
                     if signal == -1 and struct == 1:
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
-                    tp_price = fib_tp(df_h4, signal)
+                    tp_price  = fib_tp(df_h4, signal, level=1.272)
+                    tp2_price = fib_tp(df_h4, signal, level=1.618)
 
                 blocked, event_title = is_high_impact_soon(symbol)
                 if blocked:
@@ -300,7 +342,7 @@ def trading_loop():
                     continue
 
                 send_signal(symbol, action, df_signal, size_mult=size_mult,
-                            sl_mult=sl_mult, tp_mult=tp_mult, tp_price=tp_price)
+                            sl_mult=sl_mult, tp_mult=tp_mult, tp_price=tp_price, tp2_price=tp2_price)
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")
