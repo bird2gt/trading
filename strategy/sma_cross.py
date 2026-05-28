@@ -15,10 +15,18 @@ class SMACross(BaseStrategy):
         rsi = self._rsi(close)
 
         bullish = fast_ma.iloc[-1] > slow_ma.iloc[-1]
-        crossed_up = bullish
-        crossed_dn = not bullish
 
-        if self._adx(df) < 20:
+        adx = self._adx(df)
+        if adx.iloc[-1] < 20:
+            return 0
+        if adx.iloc[-1] < adx.iloc[-3]:   # ADX declining = trend weakening
+            return 0
+
+        # Slope filter: fast MA must still be moving in signal direction (last 3 bars)
+        fast_slope = fast_ma.iloc[-1] - fast_ma.iloc[-3]
+        if bullish and fast_slope <= 0:
+            return 0
+        if not bullish and fast_slope >= 0:
             return 0
 
         trend = self._trend(df_trend) if df_trend is not None else 0
@@ -26,9 +34,9 @@ class SMACross(BaseStrategy):
         ma200 = close.rolling(200).mean().iloc[-1]
         above_ma200 = close.iloc[-1] > ma200
 
-        if crossed_up and trend >= 0 and above_ma200:
+        if bullish and trend >= 0 and above_ma200:
             return 1
-        if crossed_dn and trend <= 0 and not above_ma200:
+        if not bullish and trend <= 0 and not above_ma200:
             return -1
         return 0
 
@@ -42,7 +50,7 @@ class SMACross(BaseStrategy):
             return -1
         return 0
 
-    def _adx(self, df: pd.DataFrame, period: int = 14) -> float:
+    def _adx(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         h, l, c = df["high"], df["low"], df["close"]
         up = h.diff()
         dn = -l.diff()
@@ -53,7 +61,7 @@ class SMACross(BaseStrategy):
         plus_di  = 100 * plus_dm.ewm(span=period, adjust=False).mean() / atr
         minus_di = 100 * minus_dm.ewm(span=period, adjust=False).mean() / atr
         dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
-        return dx.ewm(span=period, adjust=False).mean().iloc[-1]
+        return dx.ewm(span=period, adjust=False).mean()
 
     def _rsi(self, close: pd.Series) -> pd.Series:
         delta = close.diff()
