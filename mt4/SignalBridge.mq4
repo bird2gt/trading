@@ -31,7 +31,7 @@ void OnTimer() {
     ChandelierTrail();
     ReadSignal();
     WriteBalance();
-    WriteTradeHistory();
+    WritePositions();
 }
 
 void OnTick() {}
@@ -187,36 +187,17 @@ void WriteBalance() {
 }
 
 
-// ── trade history writer ───────────────────────────────────────────────────
+// ── positions writer ───────────────────────────────────────────────────────
 
-void WriteTradeHistory() {
-    string filename = "trades_" + Symbol() + ".csv";
-    int fh = FileOpen(filename, FILE_WRITE | FILE_CSV | FILE_ANSI, ',');
+void WritePositions() {
+    int fh = FileOpen("positions.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
     if (fh == INVALID_HANDLE) return;
-
-    FileWrite(fh, "ticket","symbol","side","lots","open_price","close_price",
-              "open_time","close_time","sl","tp","profit","swap","comment");
-
-    for (int i = OrdersHistoryTotal() - 1; i >= 0; i--) {
-        if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-        if (OrderSymbol() != Symbol()) continue;
-        if (OrderType() > OP_SELL) continue;
-
-        FileWrite(fh,
-            OrderTicket(),
-            OrderSymbol(),
-            OrderType() == OP_BUY ? "BUY" : "SELL",
-            DoubleToString(OrderLots(), 2),
-            DoubleToString(OrderOpenPrice(), 5),
-            DoubleToString(OrderClosePrice(), 5),
-            TimeToString(OrderOpenTime(),  TIME_DATE | TIME_MINUTES),
-            TimeToString(OrderCloseTime(), TIME_DATE | TIME_MINUTES),
-            DoubleToString(OrderStopLoss(), 5),
-            DoubleToString(OrderTakeProfit(), 5),
-            DoubleToString(OrderProfit(), 2),
-            DoubleToString(OrderSwap(), 2),
-            OrderComment()
-        );
+    for (int i = 0; i < OrdersTotal(); i++) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+        if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+        string type = (OrderType() == OP_BUY) ? "BUY" : "SELL";
+        FileWriteString(fh, OrderSymbol() + "," + type + "," +
+                        DoubleToString(OrderOpenPrice(), 5) + "\n");
     }
     FileClose(fh);
 }
