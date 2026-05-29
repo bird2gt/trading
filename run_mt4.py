@@ -26,21 +26,27 @@ MIN_LOTS = 0.01
 MAX_LOTS = 1.0
 
 PROFILES = {
-    "forex":  {"risk_pct": 0.02, "sl_mult": 1.5},
-    "crypto": {"risk_pct": 0.05, "sl_mult": 1.0},
-    "metal":  {"risk_pct": 0.05, "sl_mult": 1.0},
+    "forex_major": {"risk_pct": 0.02, "sl_mult": 1.5},   # EUR/USD, AUD/USD, USD/CHF, EUR/CHF
+    "forex_gbp":   {"risk_pct": 0.02, "sl_mult": 2.0},   # GBP/USD — шире ATR
+    "forex_jpy":   {"risk_pct": 0.02, "sl_mult": 1.5},   # USD/JPY — динамический pip_value
+    "forex_cad":   {"risk_pct": 0.02, "sl_mult": 1.5},   # USD/CAD — динамический pip_value
+    "crypto":      {"risk_pct": 0.01, "sl_mult": 1.0},
+    "metal":       {"risk_pct": 0.02, "sl_mult": 1.0},
 }
 
 SYMBOL_PROFILES = {
-    "EUR/USD": "forex", "GBP/USD": "forex", "USD/CHF": "forex",
-    "EUR/CHF": "forex", "USD/CAD": "forex", "AUD/USD": "forex", "USD/JPY": "forex",
+    "EUR/USD": "forex_major", "USD/CHF": "forex_major",
+    "EUR/CHF": "forex_major", "AUD/USD": "forex_major",
+    "GBP/USD": "forex_gbp",
+    "USD/JPY": "forex_jpy",
+    "USD/CAD": "forex_cad",
     "BTC/USD": "crypto", "ETH/USD": "crypto",
     "XAU/USD": "metal",  "XAG/USD": "metal",
 }
 
 
 def _profile(symbol: str) -> dict:
-    return PROFILES[SYMBOL_PROFILES.get(symbol, "forex")]
+    return PROFILES[SYMBOL_PROFILES.get(symbol, "forex_major")]
 
 # pip_size = price per 1 pip; pip_value = USD per pip per standard lot
 PIP_CONFIG = {
@@ -148,9 +154,15 @@ def _calc_lots(entry: float, sl: float, symbol: str) -> float:
         return MIN_LOTS
     cfg = PIP_CONFIG.get(symbol, {"pip_size": 0.0001, "pip_value": 10.0})
     sl_pips = sl_distance / cfg["pip_size"]
+    if symbol == "USD/JPY":
+        pip_value = 1000.0 / entry      # 100k units × 0.01 pip / rate
+    elif symbol == "USD/CAD":
+        pip_value = 10.0 / entry        # 100k units × 0.0001 pip / rate
+    else:
+        pip_value = cfg["pip_value"]
     balance = _get_balance()
     risk_amount = balance * _profile(symbol)["risk_pct"]
-    lots = risk_amount / (sl_pips * cfg["pip_value"])
+    lots = risk_amount / (sl_pips * pip_value)
     lots = round(lots, 2)
     return max(MIN_LOTS, min(MAX_LOTS, lots))
 
