@@ -29,6 +29,7 @@ PIP_CONFIG = {
     "EUR/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
     "USD/CAD": {"pip_size": 0.0001, "pip_value": 7.0},
     "AUD/USD": {"pip_size": 0.0001, "pip_value": 10.0},
+    "USD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
     "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
     "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
@@ -38,7 +39,7 @@ PIP_CONFIG = {
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]
-LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD"]
+LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
 US_SYMBOLS     = ["XAU/USD"]  # gold active during full US session
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
