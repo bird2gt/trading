@@ -16,10 +16,26 @@ from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
-RISK_PCT = 0.15        # 15% of balance per trade
 DRAWDOWN_LIMIT = 0.05  # stop trading if daily loss exceeds 5%
 MIN_LOTS = 0.01
 MAX_LOTS = 1.0
+
+PROFILES = {
+    "forex":  {"risk_pct": 0.15, "sl_mult": 1.5},
+    "crypto": {"risk_pct": 0.05, "sl_mult": 1.0},
+    "metal":  {"risk_pct": 0.05, "sl_mult": 1.0},
+}
+
+SYMBOL_PROFILES = {
+    "EUR/USD": "forex", "GBP/USD": "forex", "USD/CHF": "forex",
+    "EUR/CHF": "forex", "USD/CAD": "forex", "AUD/USD": "forex", "USD/JPY": "forex",
+    "BTC/USD": "crypto", "ETH/USD": "crypto",
+    "XAU/USD": "metal",  "XAG/USD": "metal",
+}
+
+
+def _profile(symbol: str) -> dict:
+    return PROFILES[SYMBOL_PROFILES.get(symbol, "forex")]
 
 # pip_size = price per 1 pip; pip_value = USD per pip per standard lot
 PIP_CONFIG = {
@@ -127,7 +143,7 @@ def _calc_lots(entry: float, sl: float, symbol: str) -> float:
     cfg = PIP_CONFIG.get(symbol, {"pip_size": 0.0001, "pip_value": 10.0})
     sl_pips = sl_distance / cfg["pip_size"]
     balance = _get_balance()
-    risk_amount = balance * RISK_PCT
+    risk_amount = balance * _profile(symbol)["risk_pct"]
     lots = risk_amount / (sl_pips * cfg["pip_value"])
     lots = round(lots, 2)
     return max(MIN_LOTS, min(MAX_LOTS, lots))
@@ -283,7 +299,7 @@ def trading_loop():
                     df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
                     df_signal = df_h4
                     signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
-                    sl_mult = ATR_SL_MULT
+                    sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
                     tp2_price = None
