@@ -57,6 +57,18 @@ void ReadSignal() {
     double tp1    = (n > 3) ? StringToDouble(parts[3]) : 0.0;
     if (lots <= 0) lots = LotSize;
 
+    // CLOSE must retry until flat — don't let the lastAction guard suppress it
+    // (e.g. an OrderClose rejected near market close would otherwise never retry)
+    if (action == "CLOSE") {
+        if (CountOrders(OP_BUY) > 0 || CountOrders(OP_SELL) > 0) {
+            CloseAll(-1);
+            _resetChandelier();
+            Print("Signal applied: CLOSE");
+        }
+        lastAction = action;
+        return;
+    }
+
     if (action == lastAction) return;
 
     if (action == "BUY") {
@@ -65,9 +77,6 @@ void ReadSignal() {
     } else if (action == "SELL") {
         CloseAll(OP_BUY);
         if (CountOrders(OP_SELL) == 0) { _resetChandelier(); OpenOrder(OP_SELL, lots, sl, tp1); }
-    } else if (action == "CLOSE") {
-        CloseAll(-1);
-        _resetChandelier();
     }
 
     lastAction = action;
