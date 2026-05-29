@@ -161,8 +161,15 @@ def _calc_lots(entry: float, sl: float, symbol: str) -> float:
     sl_pips = sl_distance / cfg["pip_size"]
     if symbol == "USD/JPY":
         pip_value = 1000.0 / entry      # 100k units × 0.01 pip / rate
-    elif symbol == "USD/CAD":
-        pip_value = 10.0 / entry        # 100k units × 0.0001 pip / rate
+    elif symbol in ("USD/CAD", "USD/CHF"):
+        pip_value = 10.0 / entry        # 100k × 0.0001 pip / rate (quote = CAD/CHF)
+    elif symbol == "EUR/CHF":
+        # quote currency CHF: convert 10 CHF/pip to USD via USD/CHF rate
+        try:
+            usdchf = fetch_ohlcv("USD/CHF", outputsize=1, interval="1h")["close"].iloc[-1]
+        except Exception:
+            usdchf = 0.80               # fallback ≈ recent USD/CHF
+        pip_value = 10.0 / usdchf
     else:
         pip_value = cfg["pip_value"]
     balance = _get_balance()
