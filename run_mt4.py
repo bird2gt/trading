@@ -222,16 +222,26 @@ def _send_close(symbol: str, reason: str):
 
 
 def _weekend_flat_now() -> bool:
-    """True on Friday from WEEKEND_FLAT_HOUR:MIN UTC onward — time to be flat."""
+    """True while forex/metals are closed: Fri 20:30 UTC → Sun ~21:00 UTC.
+    Crypto trades 24/7 and is exempt (see _close_all_positions exclude)."""
     now = datetime.now(timezone.utc)
-    return now.weekday() == 4 and (
-        now.hour > WEEKEND_FLAT_HOUR
-        or (now.hour == WEEKEND_FLAT_HOUR and now.minute >= WEEKEND_FLAT_MIN)
-    )
+    wd = now.weekday()  # Mon=0 … Sun=6
+    if wd == 4:  # Friday
+        return now.hour > WEEKEND_FLAT_HOUR or (
+            now.hour == WEEKEND_FLAT_HOUR and now.minute >= WEEKEND_FLAT_MIN
+        )
+    if wd == 5:  # Saturday — fully closed
+        return True
+    if wd == 6:  # Sunday — closed until forex reopens ~21:00 UTC
+        return now.hour < 21
+    return False
 
 
-def _close_all_positions(reason: str):
+def _close_all_positions(reason: str, exclude: set | None = None):
+    exclude = exclude or set()
     for symbol, action in list(_active_signals.items()):
+        if symbol in exclude:
+            continue
         if action in ("BUY", "SELL"):
             _send_close(symbol, reason)
 
@@ -295,19 +305,18 @@ def trading_loop():
             journal_sync()
             _last_journal_sync = time.time()
 
-        if _weekend_flat_now():
-            _close_all_positions("weekend flat — no positions held over weekend")
-            print("Weekend flat — positions closed, new entries blocked until Monday")
-            time.sleep(POLL_INTERVAL)
-            continue
+        weekend = _weekend_flat_now()
+        if weekend:
+            _close_all_positions("weekend flat — forex/metals closed", exclude=set(ALWAYS_SYMBOLS))
 
         drawdown_hit = _daily_drawdown_hit()
         now_utc = datetime.now(timezone.utc)
         in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
 
-        symbols = _active_symbols()
+        symbols = list(ALWAYS_SYMBOLS) if weekend else _active_symbols()
         mode = "BREAKOUT/M15" if in_news_window else "SMA/H4"
-        print(f"Session symbols: {symbols} [{mode}]{' [drawdown: new entries blocked]' if drawdown_hit else ''}")
+        weekend_tag = " [weekend: crypto only]" if weekend else ""
+        print(f"Session symbols: {symbols} [{mode}]{weekend_tag}{' [drawdown: new entries blocked]' if drawdown_hit else ''}")
         for symbol in symbols:
             try:
                 df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
