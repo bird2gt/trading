@@ -1,4 +1,6 @@
 import os
+import sys
+import socket
 import time
 import threading
 from datetime import date, datetime, timezone, timedelta
@@ -417,7 +419,16 @@ def _data_check():
     print(f"--- data check {'OK' if ok else 'FAILED'} ---")
 
 
+def _port_in_use(host: str = "127.0.0.1", port: int = 8000) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
 if __name__ == "__main__":
+    if _port_in_use():
+        print("ERROR: port 8000 already in use — another run_mt4.py is running. Aborting.")
+        sys.exit(1)
     threading.Thread(target=run_server, daemon=True).start()
     print(f"MT4 bridge running at {BRIDGE_URL}")
     print("Symbols:", ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS)
