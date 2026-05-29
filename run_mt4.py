@@ -72,6 +72,9 @@ LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/US
 US_SYMBOLS     = ["XAU/USD"]  # gold active during full US session
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
+# Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
+WEEKEND_FLAT_HOUR = 20
+WEEKEND_FLAT_MIN  = 30
 ATR_PERIOD = 14
 ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
@@ -218,6 +221,21 @@ def _send_close(symbol: str, reason: str):
         print(f"{symbol}: failed to send CLOSE — {e}")
 
 
+def _weekend_flat_now() -> bool:
+    """True on Friday from WEEKEND_FLAT_HOUR:MIN UTC onward — time to be flat."""
+    now = datetime.now(timezone.utc)
+    return now.weekday() == 4 and (
+        now.hour > WEEKEND_FLAT_HOUR
+        or (now.hour == WEEKEND_FLAT_HOUR and now.minute >= WEEKEND_FLAT_MIN)
+    )
+
+
+def _close_all_positions(reason: str):
+    for symbol, action in list(_active_signals.items()):
+        if action in ("BUY", "SELL"):
+            _send_close(symbol, reason)
+
+
 def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
     active = _active_signals.get(symbol)
     if active not in ("BUY", "SELL"):
@@ -276,6 +294,12 @@ def trading_loop():
         if time.time() - _last_journal_sync >= 3600:
             journal_sync()
             _last_journal_sync = time.time()
+
+        if _weekend_flat_now():
+            _close_all_positions("weekend flat — no positions held over weekend")
+            print("Weekend flat — positions closed, new entries blocked until Monday")
+            time.sleep(POLL_INTERVAL)
+            continue
 
         drawdown_hit = _daily_drawdown_hit()
         now_utc = datetime.now(timezone.utc)
