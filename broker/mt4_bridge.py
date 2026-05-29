@@ -1,10 +1,19 @@
 from pathlib import Path
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Depends, Header, HTTPException
 from pydantic import BaseModel
 import csv
 import uvicorn
 
 app = FastAPI()
+
+BRIDGE_TOKEN = os.environ.get("MT4_BRIDGE_TOKEN", "")
+
+
+def _verify_token(authorization: str = Header(default="")):
+    if BRIDGE_TOKEN and authorization != f"Bearer {BRIDGE_TOKEN}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 MT4_FILES_DIR = Path.home() / "Library/Application Support/net.metaquotes.wine.metatrader4/drive_c/Program Files (x86)/MetaTrader 4/MQL4/Files"
 
@@ -31,7 +40,7 @@ def get_signal(symbol: str = "EURUSD"):
 
 
 @app.post("/signal")
-def set_signal(signal: Signal):
+def set_signal(signal: Signal, _=Depends(_verify_token)):
     _signals[signal.symbol] = signal.model_dump()
     _write_signal_file(signal.symbol, signal.action, signal.lots, signal.sl, signal.tp)
     return {"ok": True}
@@ -70,6 +79,22 @@ def get_account():
         return info
     except Exception:
         return {}
+
+
+@app.get("/positions")
+def get_positions():
+    path = MT4_FILES_DIR / "positions.txt"
+    result = []
+    try:
+        for line in path.read_text().strip().splitlines():
+            if not line:
+                continue
+            parts = line.split(",")
+            if len(parts) >= 3:
+                result.append({"symbol": parts[0], "action": parts[1], "open_price": float(parts[2])})
+    except Exception:
+        pass
+    return result
 
 
 @app.get("/trades")

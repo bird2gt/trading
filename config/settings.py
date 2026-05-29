@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TWELVE_DATA_API_KEY = os.environ["TWELVE_DATA_API_KEY"]
+TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "")
 
 SYMBOLS = ["BTC/USDT"]
 FOREX_SYMBOLS = ["EUR/USD", "USD/CHF", "BTC/USD", "XAU/USD", "XAG/USD"]

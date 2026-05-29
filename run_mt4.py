@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from datetime import date, datetime, timezone, timedelta
@@ -16,12 +17,16 @@ from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
 
 BRIDGE_URL = "http://127.0.0.1:8000"
+_bridge_session = requests.Session()
+_bridge_token = os.environ.get("MT4_BRIDGE_TOKEN", "")
+if _bridge_token:
+    _bridge_session.headers["Authorization"] = f"Bearer {_bridge_token}"
 DRAWDOWN_LIMIT = 0.05  # stop trading if daily loss exceeds 5%
 MIN_LOTS = 0.01
 MAX_LOTS = 1.0
 
 PROFILES = {
-    "forex":  {"risk_pct": 0.15, "sl_mult": 1.5},
+    "forex":  {"risk_pct": 0.02, "sl_mult": 1.5},
     "crypto": {"risk_pct": 0.05, "sl_mult": 1.0},
     "metal":  {"risk_pct": 0.05, "sl_mult": 1.0},
 }
@@ -73,6 +78,7 @@ CORR_GROUPS = [
     {"EUR/USD", "USD/CHF"},        # оба = ставка на USD (разные стороны)
     {"GBP/USD", "USD/CHF"},        # то же
 ]
+_MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_PROFILES}
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
 _entry_prices: dict[str, float] = {}   # symbol → entry price
 _day_start: dict = {"date": None, "balance": None}
@@ -127,7 +133,7 @@ def _correlated_conflict(symbol: str, action: str) -> bool:
 
 def _get_balance() -> float:
     try:
-        resp = requests.get(f"{BRIDGE_URL}/balance", timeout=3)
+        resp = _bridge_session.get(f"{BRIDGE_URL}/balance", timeout=3)
         bal = resp.json().get("balance")
     except Exception as e:
         raise RuntimeError(f"balance unavailable: {e}") from e
@@ -174,35 +180,20 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     base_lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
     size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
 
-    if tp2_price is not None:
-        lots1 = max(MIN_LOTS, round(base_lots * 0.5, 2))
-        lots2 = max(MIN_LOTS, round(base_lots * 0.5, 2))
-        requests.post(f"{BRIDGE_URL}/signal", json={
-            "symbol": mt4_symbol, "action": action,
-            "lots": lots1, "sl": sl, "tp": tp1,
-        }, timeout=3)
-        requests.post(f"{BRIDGE_URL}/signal", json={
-            "symbol": mt4_symbol, "action": action,
-            "lots": lots2, "sl": sl, "tp": tp2_price,
-        }, timeout=3)
-        _active_signals[td_symbol] = action
-        _entry_prices[td_symbol] = entry
-        print(f"{td_symbol}: {action} | lots={lots1}+{lots2}{size_note} | SL={sl:.5f} TP1={tp1:.5f} TP2={tp2_price:.5f} [fib 127/161]")
-    else:
-        requests.post(f"{BRIDGE_URL}/signal", json={
-            "symbol": mt4_symbol, "action": action,
-            "lots": base_lots, "sl": sl, "tp": tp1,
-        }, timeout=3)
-        _active_signals[td_symbol] = action
-        _entry_prices[td_symbol] = entry
-        tp_note = " [fib]" if tp_price is not None else ""
-        print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
+    _bridge_session.post(f"{BRIDGE_URL}/signal", json={
+        "symbol": mt4_symbol, "action": action,
+        "lots": base_lots, "sl": sl, "tp": tp1,
+    }, timeout=3)
+    _active_signals[td_symbol] = action
+    _entry_prices[td_symbol] = entry
+    tp_note = " [fib TP2=chandelier]" if tp2_price is not None else (" [fib]" if tp_price is not None else "")
+    print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
 
 
 def _send_close(symbol: str, reason: str):
     mt4_symbol = symbol.replace("/", "")
     try:
-        requests.post(f"{BRIDGE_URL}/signal", json={
+        _bridge_session.post(f"{BRIDGE_URL}/signal", json={
             "symbol": mt4_symbol, "action": "CLOSE",
             "lots": 0.01, "sl": 0.0, "tp": 0.0,
         }, timeout=3)
@@ -258,6 +249,7 @@ def _sleep_until_open():
 def trading_loop():
     global _last_digest_date, _last_calendar_date, _last_journal_sync
     while True:
+        _sleep_until_open()
         today = date.today()
         if datetime.now(timezone.utc).hour == 5 and _last_calendar_date != today:
             _last_calendar_date = today
@@ -367,12 +359,26 @@ def trading_loop():
         time.sleep(interval)
 
 
+def _load_active_signals():
+    try:
+        resp = _bridge_session.get(f"{BRIDGE_URL}/positions", timeout=3)
+        for pos in resp.json():
+            symbol = _MT4_TO_PY.get(pos["symbol"])
+            if symbol:
+                _active_signals[symbol] = pos["action"]
+                _entry_prices[symbol] = pos["open_price"]
+        if _active_signals:
+            print(f"Reconciled {len(_active_signals)} open positions: {_active_signals}")
+    except Exception as e:
+        print(f"[WARN] position reconciliation failed: {e}")
+
+
 def _clear_signal_files():
     all_symbols = ASIAN_SYMBOLS + LONDON_SYMBOLS
     for symbol in all_symbols:
         mt4_symbol = symbol.replace("/", "")
         try:
-            requests.post(f"{BRIDGE_URL}/signal", json={
+            _bridge_session.post(f"{BRIDGE_URL}/signal", json={
                 "symbol": mt4_symbol, "action": "NONE",
                 "lots": 0.01, "sl": 0.0, "tp": 0.0,
             }, timeout=3)
@@ -406,6 +412,7 @@ if __name__ == "__main__":
     time.sleep(1)  # wait for server to start
     _clear_signal_files()
     _data_check()
+    _load_active_signals()
     journal_sync()
     journal_stats()
     trading_loop()
