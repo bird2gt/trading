@@ -16,6 +16,7 @@ SYMBOL_MAP_YAHOO = {
     "USD/CHF": "USDCHF=X",
     "EUR/CHF": "EURCHF=X",
     "USD/CAD": "USDCAD=X",
+    "AUD/USD": "AUDUSD=X",
     "USD/JPY": "USDJPY=X",
     "BTC/USD": "BTC-USD",
     "ETH/USD": "ETH-USD",
@@ -46,6 +47,7 @@ _ALPHA_FX_MAP = {
     "USD/CHF": ("USD", "CHF"),
     "USD/JPY": ("USD", "JPY"),
     "USD/CAD": ("USD", "CAD"),
+    "AUD/USD": ("AUD", "USD"),
     "XAU/USD": ("XAU", "USD"),
     "XAG/USD": ("XAG", "USD"),
 }
@@ -70,6 +72,7 @@ _STOOQ_MAP = {
     "USD/CHF": "usdchf",
     "USD/JPY": "usdjpy",
     "USD/CAD": "usdcad",
+    "AUD/USD": "audusd",
     "XAU/USD": "xauusd",
     "XAG/USD": "xagusd",
     "BTC/USD": "btcusd",
