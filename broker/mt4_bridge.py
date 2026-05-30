@@ -110,5 +110,5 @@ def get_trades():
     return rows
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000):
+def run_server(host: str = "127.0.0.1", port: int = 8000):
     uvicorn.run(app, host=host, port=port, log_level="warning")
