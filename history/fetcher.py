@@ -77,6 +77,9 @@ _STOOQ_MAP = {
     "XAG/USD": "xagusd",
     "BTC/USD": "btcusd",
 }
+_stooq_disabled_until: float = 0.0
+_STOOQ_TIMEOUT = 5
+_STOOQ_FAILURE_TTL = 1800
 
 _STALE_HOURS = {"15min": 1, "1h": 2, "4h": 8, "1day": 48}
 
@@ -270,6 +273,10 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 
 
 def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    global _stooq_disabled_until
+    if time.time() < _stooq_disabled_until:
+        return pd.DataFrame()
+
     ticker = _STOOQ_MAP.get(symbol)
     if ticker is None:
         return pd.DataFrame()
@@ -278,11 +285,16 @@ def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if stooq_i is None:
         return pd.DataFrame()
 
-    resp = requests.get(
-        "https://stooq.com/q/d/l/",
-        params={"s": ticker, "i": stooq_i},
-        timeout=15,
-    )
+    try:
+        resp = requests.get(
+            "https://stooq.com/q/d/l/",
+            params={"s": ticker, "i": stooq_i},
+            timeout=_STOOQ_TIMEOUT,
+        )
+    except requests.RequestException:
+        _stooq_disabled_until = time.time() + _STOOQ_FAILURE_TTL
+        return pd.DataFrame()
+
     if resp.status_code != 200:
         return pd.DataFrame()
 
