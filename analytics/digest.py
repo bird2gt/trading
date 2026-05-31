@@ -87,6 +87,36 @@ FORECASTERS = [
         "url":    "https://messari.io/rss",
         "topics": ["BTC/USD"],
     },
+    {
+        "name":   "ForexLive",
+        "url":    "https://www.forexlive.com/feed/",
+        "topics": ["EUR/USD", "USD/CHF", "XAU/USD"],
+    },
+    {
+        "name":   "FXStreet",
+        "url":    "https://www.fxstreet.com/rss/news",
+        "topics": ["EUR/USD", "USD/CHF", "XAU/USD"],
+    },
+    {
+        "name":   "SilverSeek",
+        "url":    "https://www.silverseek.com/rss.xml",
+        "topics": ["XAU/USD", "XAG/USD"],
+    },
+    {
+        "name":   "Cointelegraph",
+        "url":    "https://cointelegraph.com/rss",
+        "topics": ["BTC/USD"],
+    },
+    {
+        "name":   "CoinDesk",
+        "url":    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "topics": ["BTC/USD"],
+    },
+    {
+        "name":   "The Defiant",
+        "url":    "https://thedefiant.io/feed",
+        "topics": ["BTC/USD"],
+    },
 ]
 
 # ── Macro / political economy forecasters (4) ─────────────────────────────
@@ -111,6 +141,21 @@ MACRO_POLITICAL = [
         "name":   "Council on Foreign Relations",
         "url":    "https://www.cfr.org/rss/blog_entries.xml",
         "about":  "Geopolitics and economic policy, trade wars, sanctions",
+    },
+    {
+        "name":   "ZeroHedge",
+        "url":    "https://feeds.feedburner.com/zerohedge/feed",
+        "about":  "Market risk sentiment, geopolitics, contrarian macro takes",
+    },
+    {
+        "name":   "Bruegel",
+        "url":    "https://www.bruegel.org/rss.xml",
+        "about":  "European economic policy, ECB, fiscal and trade analysis",
+    },
+    {
+        "name":   "Bank Underground — Bank of England",
+        "url":    "https://bankunderground.co.uk/feed/",
+        "about":  "BoE staff research on monetary policy, rates, financial stability",
     },
 ]
 
@@ -255,7 +300,9 @@ def _save_digest(today: date, sections: list[str]) -> None:
     path.write_text(body, encoding="utf-8")
     print(f"Digest saved → {path}")
     _send_email(today, body)
-    _send_telegram(f"📊 *Дайджест прогнозистов — {today}*\n\n" + "\n\n".join(sections))
+    # Telegram is sent as plain text — strip markdown header markers for readability
+    tg_body = "\n\n".join(sections).replace("## ", "▸ ")
+    _send_telegram(f"📊 Дайджест прогнозистов — {today}\n\n{tg_body}")
 
 
 def _send_email(today: date, body: str) -> None:
