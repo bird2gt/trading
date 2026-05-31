@@ -100,6 +100,8 @@ _last_journal_sync: float = 0.0
 
 def _active_symbols() -> list[str]:
     now = datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return ALWAYS_SYMBOLS
     hour, minute = now.hour, now.minute
     if hour < 8 or hour >= 22:
         session = ASIAN_SYMBOLS                          # 22:00-08:00: XAU, XAG
@@ -443,7 +445,10 @@ def _clear_signal_files():
 
 def _data_check():
     print("--- data check ---")
-    all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
+    if datetime.now(timezone.utc).weekday() >= 5:
+        all_symbols = ALWAYS_SYMBOLS
+    else:
+        all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
     ok = True
     for symbol in all_symbols:
         for interval in ("1h", "4h", "1day"):
