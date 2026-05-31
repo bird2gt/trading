@@ -269,11 +269,13 @@ def _send_telegram(text: str) -> None:
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
     for chunk in chunks:
         try:
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"},
+                json={"chat_id": chat_id, "text": chunk},
                 timeout=10,
             )
+            if not resp.ok:
+                print(f"Telegram send failed: {resp.status_code} {resp.text}")
         except Exception as e:
             print(f"Telegram send error: {e}")
 
