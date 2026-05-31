@@ -9,6 +9,7 @@ Run manually: python -m analytics.digest
 
 from __future__ import annotations
 import os
+import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -116,6 +117,13 @@ MACRO_POLITICAL = [
 HEADERS   = {"User-Agent": "Mozilla/5.0"}
 LOOKBACK  = 1    # days — only posts from the last 24 hours
 MAX_POSTS = 5    # posts per forecaster
+SUMMARY_CHARS = 500  # max chars of post description fed to the model
+
+
+def _clean(text: str) -> str:
+    """Strip HTML tags and collapse whitespace from an RSS summary."""
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _is_sent_today() -> bool:
@@ -146,19 +154,26 @@ def run_digest() -> None:
     if market_entries:
         by_topic: dict[str, list[str]] = {}
         for e in market_entries:
+            post = f"[{e['source']}] {e['title']}"
+            if e["summary"]:
+                post += f"\n  {e['summary']}"
             for topic in e["topics"]:
-                by_topic.setdefault(topic, []).append(f"[{e['source']}] {e['title']}")
+                by_topic.setdefault(topic, []).append(post)
 
         for topic, posts in by_topic.items():
             text = "\n".join(f"- {p}" for p in posts[:20])
             resp = client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=300,
+                max_tokens=600,
                 system=(
                     "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. "
                     "Ни одного слова по-английски. "
                     "Ты макро-аналитик. Суммируй преобладающий взгляд аналитиков "
                     "на инструмент в 3-5 предложениях. "
+                    "Опирайся на заголовки и краткие описания постов; "
+                    "не проси полный текст и не упоминай, что данных мало — "
+                    "если материала недостаточно, сделай осторожный вывод. "
+                    "Пиши обычным текстом: без markdown, без заголовков, без списков. "
                     "Заканчивай строкой 'Bias: бычий/медвежий/нейтральный — причина'."
                 ),
                 messages=[{"role": "user", "content": f"Посты аналитиков по {topic}:\n\n{text}\n\nОтвечай только на русском языке."}],
@@ -167,16 +182,24 @@ def run_digest() -> None:
 
     # Macro/political section — single summary
     if macro_entries:
-        text = "\n".join(f"- [{e['source']}] {e['title']}" for e in macro_entries[:25])
+        posts = []
+        for e in macro_entries[:25]:
+            line = f"- [{e['source']}] {e['title']}"
+            if e["summary"]:
+                line += f"\n  {e['summary']}"
+            posts.append(line)
+        text = "\n".join(posts)
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=400,
+            max_tokens=800,
             system=(
                 "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Ни одного слова по-английски. "
                 "Ты геополитический макро-аналитик. "
                 "Суммируй ключевые политико-экономические темы из постов сегодня "
                 "и как они могут повлиять на USD, EUR, золото и крипту. "
-                "Указывай конкретное направление и механизм влияния."
+                "Указывай конкретное направление и механизм влияния. "
+                "Опирайся на заголовки и краткие описания; не проси полный текст. "
+                "Пиши обычным текстом: без markdown, без заголовков, без списков."
             ),
             messages=[{"role": "user", "content": f"Сегодняшние макро/политические посты:\n\n{text}\n\nОтвечай только на русском языке."}],
         )
@@ -205,9 +228,10 @@ def _fetch_all(forecasters: list[dict], cutoff: datetime) -> list[dict]:
                 if published and published < cutoff:
                     continue
                 results.append({
-                    "source": f["name"],
-                    "title":  entry.get("title", ""),
-                    "topics": f.get("topics", []),
+                    "source":  f["name"],
+                    "title":   entry.get("title", ""),
+                    "summary": _clean(entry.get("summary", ""))[:SUMMARY_CHARS],
+                    "topics":  f.get("topics", []),
                 })
                 count += 1
         except Exception:
