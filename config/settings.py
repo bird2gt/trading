@@ -18,12 +18,10 @@ PROFILES = {
     "forex": {
         "enabled": False,  # traded via MT4, not Bybit
         "symbols": ["EUR/USD", "USD/CHF", "GBP/USD"],
-        "strategy": "z_score_adx",
         "strategy_params": {
             "z_period": 20,
             "z_entry": 2.0,
             "adx_period": 14,
-            "ema_period": 200,
             "adx_threshold": 25.0,
         },
         "risk_params": {
@@ -34,7 +32,6 @@ PROFILES = {
     "crypto": {
         "enabled": True,
         "symbols": ["BTC/USD", "ETH/USD"],
-        "strategy": "breakout",
         "strategy_params": {
             "period": 20,
         },
@@ -46,10 +43,11 @@ PROFILES = {
     "metals": {
         "enabled": False,  # traded via MT4, not Bybit
         "symbols": ["XAU/USD", "XAG/USD"],
-        "strategy": "mean_reversion",
         "strategy_params": {
             "period": 20,
             "std_mult": 2.0,
+            "adx_period": 14,
+            "max_adx": 25.0,
         },
         "risk_params": {
             "sl_pct": 0.015,
@@ -59,7 +57,6 @@ PROFILES = {
     "stocks": {
         "enabled": False,
         "symbols": ["AAPL", "GOOGL"],
-        "strategy": "sma_cross",
         "strategy_params": {
             "fast": 10,
             "slow": 30,

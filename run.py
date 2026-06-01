@@ -25,14 +25,29 @@ def _sync_positions():
                 print(f"Warning: position sync failed for {symbol}: {e}")
 
 
-def load_strategy(profile_name, asset_class, strategy_name, strategy_params):
-    """Load strategy class and instantiate with params."""
+def load_strategy(profile_name, profile):
+    """Load the profile strategy class and instantiate with params."""
     try:
-        module = importlib.import_module(f"strategy.{asset_class}.{strategy_name}")
-        strategy_class = getattr(module, _camelize(strategy_name))
-        return strategy_class(**strategy_params)
+        strategy_name = profile.get("strategy")
+        if strategy_name:
+            module = importlib.import_module(f"strategy.{profile_name}.{strategy_name}")
+            class_name = _camelize(strategy_name)
+        else:
+            module = importlib.import_module(f"strategy.{profile_name}")
+            class_name = _camelize(profile_name)
+
+        strategy_class = getattr(module, class_name, None)
+        if strategy_class is None:
+            target = class_name.lower()
+            for value in module.__dict__.values():
+                if isinstance(value, type) and value.__name__.lower() == target:
+                    strategy_class = value
+                    break
+        if strategy_class is None:
+            raise AttributeError(f"{module.__name__} has no strategy class for {class_name}")
+        return strategy_class(**profile.get("strategy_params", {}))
     except (ImportError, AttributeError) as e:
-        print(f"Warning: failed to load strategy {asset_class}/{strategy_name}: {e}")
+        print(f"Warning: failed to load strategy for profile {profile_name}: {e}")
         return None
 
 
@@ -53,15 +68,10 @@ def main():
     for profile_name, profile in PROFILES.items():
         if not profile["enabled"]:
             continue
-        strategy = load_strategy(
-            profile_name,
-            profile_name,
-            profile["strategy"],
-            profile["strategy_params"],
-        )
+        strategy = load_strategy(profile_name, profile)
         if strategy:
             strategies[profile_name] = strategy
-            print(f"Loaded {profile_name}: {profile['strategy']} with {profile['strategy_params']}")
+            print(f"Loaded {profile_name}: {type(strategy).__name__} with {profile['strategy_params']}")
 
     if not strategies:
         print("No strategies loaded, exiting")
