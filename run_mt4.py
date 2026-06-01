@@ -443,7 +443,7 @@ def _load_active_signals():
 
 
 def _clear_signal_files():
-    all_symbols = ASIAN_SYMBOLS + LONDON_SYMBOLS
+    all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
     for symbol in all_symbols:
         mt4_symbol = symbol.replace("/", "")
         try:
