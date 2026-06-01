@@ -80,6 +80,24 @@ KEYWORDS = {
     "XAG/USD": ["silver", "xag", "precious metals", "inflation", "fed ", "dollar", "gold", "bullion"],
 }
 
+FEEDS.update({
+    "GBP/USD": list(FEEDS["EUR/USD"]),
+    "EUR/CHF": list(FEEDS["USD/CHF"]),
+    "USD/CAD": list(FEEDS["USD/CHF"]),
+    "AUD/USD": list(FEEDS["USD/CHF"]),
+    "USD/JPY": list(FEEDS["USD/CHF"]),
+    "ETH/USD": list(FEEDS["BTC/USD"]),
+})
+
+KEYWORDS.update({
+    "GBP/USD": ["pound", "sterling", "gbp", "boe", "bank of england", "dollar", "usd", "fed ", "forex"],
+    "EUR/CHF": ["euro", "eur", "ecb", "swiss", "chf", "snb", "franc", "forex"],
+    "USD/CAD": ["canadian", "cad", "bank of canada", "boc", "loonie", "oil", "wti", "dollar", "usd", "fed ", "forex"],
+    "AUD/USD": ["australian", "aussie", "aud", "rba", "reserve bank of australia", "china", "iron ore", "dollar", "usd", "fed ", "forex"],
+    "USD/JPY": ["yen", "jpy", "boj", "bank of japan", "japan", "treasury yields", "dollar", "usd", "fed ", "forex"],
+    "ETH/USD": ["ethereum", "ether", "eth", "crypto", "cryptocurrency", "defi", "etf"],
+})
+
 # Specialized feeds — headlines already targeted, skip keyword filter
 _SKIP_FILTER = {
     "https://www.coindesk.com/arc/outboundfeeds/rss/",

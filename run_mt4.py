@@ -3,7 +3,7 @@ import sys
 import socket
 import time
 import threading
-from datetime import date, datetime, timezone, timedelta
+from datetime import date, datetime, timezone
 import requests
 import pandas as pd
 from history.fetcher import fetch_ohlcv
@@ -284,17 +284,8 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
 
 
 def _sleep_until_open():
-    """If outside trading hours (08:00–21:00 UTC), sleep until 08:00 UTC."""
-    now = datetime.now(timezone.utc)
-    if 8 <= now.hour < 21:
-        return
-    if now.hour < 8:
-        wake = now.replace(hour=8, minute=0, second=0, microsecond=0)
-    else:
-        wake = (now + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-    secs = (wake - now).total_seconds()
-    print(f"Outside trading hours — sleeping {secs/3600:.1f}h until {wake.strftime('%H:%M UTC')}")
-    time.sleep(secs)
+    """Keep the loop alive: crypto is 24/7, sessions gate the other symbols."""
+    return
 
 
 def trading_loop():
@@ -313,6 +304,8 @@ def trading_loop():
         if time.time() - _last_journal_sync >= 3600:
             journal_sync()
             _last_journal_sync = time.time()
+
+        _load_active_signals()
 
         weekend = _weekend_flat_now()
         if weekend:
@@ -418,15 +411,35 @@ def trading_loop():
 def _load_active_signals():
     try:
         resp = _bridge_session.get(f"{BRIDGE_URL}/positions", timeout=3)
-        for pos in resp.json():
-            symbol = _MT4_TO_PY.get(pos["symbol"])
-            if symbol:
-                _active_signals[symbol] = pos["action"]
-                _entry_prices[symbol] = pos["open_price"]
-        if _active_signals:
-            print(f"Reconciled {len(_active_signals)} open positions: {_active_signals}")
+        resp.raise_for_status()
+        positions = resp.json()
     except Exception as e:
         print(f"[WARN] position reconciliation failed: {e}")
+        return
+
+    live_signals: dict[str, str] = {}
+    live_entries: dict[str, float] = {}
+    for pos in positions:
+        symbol = _MT4_TO_PY.get(pos.get("symbol", ""))
+        action = pos.get("action")
+        if symbol and action in ("BUY", "SELL"):
+            live_signals[symbol] = action
+            live_entries[symbol] = float(pos.get("open_price", 0.0))
+
+    stale = {
+        symbol: action
+        for symbol, action in _active_signals.items()
+        if action in ("BUY", "SELL") and symbol not in live_signals
+    }
+
+    _active_signals.clear()
+    _active_signals.update(live_signals)
+    _entry_prices.clear()
+    _entry_prices.update(live_entries)
+
+    if live_signals or stale:
+        stale_note = f"; cleared stale={stale}" if stale else ""
+        print(f"Reconciled {len(live_signals)} open positions: {live_signals}{stale_note}")
 
 
 def _clear_signal_files():
