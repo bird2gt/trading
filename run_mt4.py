@@ -89,10 +89,13 @@ STRATEGY = SMACross(fast=5, slow=20)
 BREAKOUT_STRATEGY = Breakout(period=8)  # 8 × 15min = 2h pre-news range
 
 CORR_GROUPS = [
-    {"EUR/USD", "GBP/USD"},        # EUR и GBP коррелируют
-    {"XAU/USD", "XAG/USD"},        # золото и серебро коррелируют
-    {"EUR/USD", "USD/CHF"},        # оба = ставка на USD (разные стороны)
-    {"GBP/USD", "USD/CHF"},        # то же
+    {"EUR/USD", "GBP/USD"},        # положительная корреляция: блокировать одинаковые действия
+    {"XAU/USD", "XAG/USD"},        # положительная корреляция: блокировать одинаковые действия
+]
+# Обратная корреляция: блокировать ПРОТИВОПОЛОЖНЫЕ действия (BUY одного = SELL другого = двойной шорт USD)
+INVERSE_CORR_GROUPS = [
+    {"EUR/USD", "USD/CHF"},        # EUR/USD↑ = USD↓ = USD/CHF↓
+    {"GBP/USD", "USD/CHF"},        # GBP/USD↑ = USD↓ = USD/CHF↓
 ]
 _MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_PROFILES}
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
@@ -110,7 +113,7 @@ def _active_symbols() -> list[str]:
     hour, minute = now.hour, now.minute
     if hour < 8 or hour >= 22:
         session = ASIAN_SYMBOLS                          # 22:00-08:00: XAU, XAG
-    elif hour > 12 or (hour == 12 and minute >= 30):
+    elif (hour > 12 or (hour == 12 and minute >= 30)) and hour < 21:
         session = LONDON_SYMBOLS + US_SYMBOLS            # 12:30-21:00: EUR, GBP, CHF + XAU
     else:
         session = LONDON_SYMBOLS                         # 08:00-12:30: EUR, GBP, CHF
@@ -138,6 +141,7 @@ def _daily_drawdown_hit() -> bool:
 
 
 def _correlated_conflict(symbol: str, action: str) -> bool:
+    # Положительная корреляция: блокировать одинаковые действия
     for group in CORR_GROUPS:
         if symbol not in group:
             continue
@@ -145,6 +149,16 @@ def _correlated_conflict(symbol: str, action: str) -> bool:
             if other == symbol:
                 continue
             if _active_signals.get(other) == action:
+                return True
+    # Обратная корреляция: блокировать противоположные действия (обе позиции = одна сторона по USD)
+    opposite = "SELL" if action == "BUY" else "BUY"
+    for group in INVERSE_CORR_GROUPS:
+        if symbol not in group:
+            continue
+        for other in group:
+            if other == symbol:
+                continue
+            if _active_signals.get(other) == opposite:
                 return True
     return False
 
@@ -229,15 +243,17 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
 def _send_close(symbol: str, reason: str):
     mt4_symbol = symbol.replace("/", "")
     try:
-        _bridge_session.post(f"{BRIDGE_URL}/signal", json={
+        resp = _bridge_session.post(f"{BRIDGE_URL}/signal", json={
             "symbol": mt4_symbol, "action": "CLOSE",
             "lots": 0.01, "sl": 0.0, "tp": 0.0,
         }, timeout=5)
-        _active_signals[symbol] = "NONE"
-        _entry_prices.pop(symbol, None)
-        print(f"{symbol}: CLOSE — {reason}")
+        resp.raise_for_status()
     except Exception as e:
         print(f"{symbol}: failed to send CLOSE — {e}")
+        return
+    _active_signals[symbol] = "NONE"
+    _entry_prices.pop(symbol, None)
+    print(f"{symbol}: CLOSE — {reason}")
 
 
 def _weekend_flat_now() -> bool:
