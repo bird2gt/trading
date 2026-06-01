@@ -93,7 +93,8 @@ STRATEGY_FOREX = Forex(                        # profile strategy: forex
     z_period=20, z_entry=2.0,
     adx_period=14, adx_threshold=25.0,
 )
-STRATEGY_CRYPTO = Crypto(period=20)            # profile strategy: crypto
+STRATEGY_CRYPTO = Crypto(period=20, adx_period=14, adx_threshold=25.0,
+                         vol_ma=20, vol_mult=1.2, adx_rising_bars=5)  # matches backtest
 STRATEGY_METALS = Metals(period=20, std_mult=2.0, adx_period=14, max_adx=25.0)
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 

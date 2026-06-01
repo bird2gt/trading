@@ -53,9 +53,10 @@ class ZScoreAdx(BaseStrategy):
         plus_dm  = up.where((up > dn) & (up > 0), 0.0)
         minus_dm = dn.where((dn > up) & (dn > 0), 0.0)
         tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-        atr      = tr.ewm(span=self.adx_period, adjust=False).mean()
-        plus_di  = 100 * plus_dm.ewm(span=self.adx_period, adjust=False).mean() / atr
-        minus_di = 100 * minus_dm.ewm(span=self.adx_period, adjust=False).mean() / atr
+        a        = 1 / self.adx_period
+        atr      = tr.ewm(alpha=a, adjust=False).mean()
+        plus_di  = 100 * plus_dm.ewm(alpha=a, adjust=False).mean() / atr
+        minus_di = 100 * minus_dm.ewm(alpha=a, adjust=False).mean() / atr
         dx  = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
-        adx = dx.ewm(span=self.adx_period, adjust=False).mean()
+        adx = dx.ewm(alpha=a, adjust=False).mean()
         return adx, plus_di, minus_di

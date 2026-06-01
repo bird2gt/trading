@@ -128,7 +128,7 @@ def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     ticker = SYMBOL_MAP_YAHOO.get(symbol, symbol)
 
     if interval == "4h":
-        raw = yf.download(ticker, period="6mo", interval="1h",
+        raw = yf.download(ticker, period="730d", interval="1h",
                           auto_adjust=True, progress=False)
         df = _resample_4h(raw)
     elif interval == "15min":
@@ -164,7 +164,7 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         params={
             "symbol":     symbol,
             "interval":   _TWELVE_INTERVAL.get(interval, interval),
-            "outputsize": 500,
+            "outputsize": min(outputsize, 5000),
             "timezone":   "UTC",
             "apikey":     api_key,
         },

@@ -1,13 +1,15 @@
 """
 Two-week walk-forward simulation.
-Forex:          ZScoreAdx(adx≥25, z≥2.0) — pullback to EMA200 in strong trend
-Metals/Crypto:  ZScoreAdx(adx≥20, z≥1.5) — same logic, wider threshold
+Forex:   ZScoreAdx(adx≥25, z≥2.0) — +DI/-DI direction + Z-Score signal line
+Metals:  ZScoreAdx(adx≥20, z≥1.5) — same logic, wider threshold
+Crypto:  BreakoutADX(adx≥25, rising≥5) — matches live run_mt4.py
 Signal on closed H4 bars only (df_h4.iloc[:-1]) — no repaint.
 """
 import time
 import pandas as pd
 from history.fetcher import fetch_ohlcv
 from strategy.forex.z_score_adx import ZScoreAdx
+from strategy.crypto.breakout import Breakout as BreakoutCrypto
 from strategy.sma_cross import SMACross  # exit MA only, not used for signals
 
 SYMBOLS = [
@@ -21,14 +23,19 @@ FOREX_SYMBOLS = {
     "EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF",
     "AUD/USD", "USD/JPY", "USD/CAD",
 }
+CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD"}
 
 STRATEGY_FOREX = ZScoreAdx(
     z_period=20, z_entry=2.0,
-    adx_period=14, ema_period=200, adx_threshold=25.0,
+    adx_period=14, adx_threshold=25.0,
 )
-STRATEGY_OTHER = ZScoreAdx(
+STRATEGY_METALS = ZScoreAdx(
     z_period=20, z_entry=1.5,
-    adx_period=14, ema_period=200, adx_threshold=20.0,
+    adx_period=14, adx_threshold=20.0,
+)
+STRATEGY_CRYPTO = BreakoutCrypto(
+    period=20, adx_period=14, adx_threshold=25.0,
+    vol_ma=20, vol_mult=1.2, adx_rising_bars=5,
 )
 
 ATR_PERIOD   = 14
@@ -81,13 +88,18 @@ def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -
 
 
 def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
-    strategy = STRATEGY_FOREX if symbol in FOREX_SYMBOLS else STRATEGY_OTHER
+    if symbol in FOREX_SYMBOLS:
+        strategy = STRATEGY_FOREX
+    elif symbol in CRYPTO_SYMBOLS:
+        strategy = STRATEGY_CRYPTO
+    else:
+        strategy = STRATEGY_METALS
     sl_mult  = SL_MULT.get(symbol, 1.5)
     atr      = _atr_series(df_h4)
     trades   = []
     in_trade = False
     balance  = INITIAL_BALANCE
-    start_i  = len(df_h4) - TWO_WEEKS_H4
+    start_i  = max(WARMUP_H4, len(df_h4) - TWO_WEEKS_H4)
 
     for i in range(start_i, len(df_h4)):
         bar_time = df_h4.index[i]
@@ -157,7 +169,12 @@ def main():
             df_h4 = fetch_ohlcv(sym, outputsize=TOTAL_H4 + 1, interval="4h")
             data[sym] = df_h4
             wstart = df_h4.index[-TWO_WEEKS_H4].date()
-            tag = "ZScoreAdx(25/2.0)" if sym in FOREX_SYMBOLS else "ZScoreAdx(20/1.5)"
+            if sym in FOREX_SYMBOLS:
+                tag = "ZScoreAdx(25/2.0)"
+            elif sym in CRYPTO_SYMBOLS:
+                tag = "BreakoutADX(25/r5)"
+            else:
+                tag = "ZScoreAdx(20/1.5)"
             print(f"ok  [{tag}]  window from {wstart}")
         except Exception as e:
             print(f"FAIL — {e}")
@@ -176,14 +193,18 @@ def main():
 
     df = pd.DataFrame(all_trades)
     forex_df = df[df["symbol"].isin(FOREX_SYMBOLS)]
-    other_df = df[~df["symbol"].isin(FOREX_SYMBOLS)]
 
     # ── per-symbol table ─────────────────────────────────────────────────────
     print(f"\n{'Symbol':<10} {'Strategy':<20} {'Tr':>3} {'W':>3} {'L':>3} {'Win%':>6} {'PnL $':>9}")
     print("─" * 58)
     for sym in SYMBOLS:
         sub  = df[df["symbol"] == sym]
-        tag  = "ZScoreAdx(25/2.0)" if sym in FOREX_SYMBOLS else "ZScoreAdx(20/1.5)"
+        if sym in FOREX_SYMBOLS:
+            tag = "ZScoreAdx(25/2.0)"
+        elif sym in CRYPTO_SYMBOLS:
+            tag = "BreakoutADX(25/r5)"
+        else:
+            tag = "ZScoreAdx(20/1.5)"
         if sub.empty:
             print(f"{sym:<10} {tag:<20} {'–':>3}")
             continue
@@ -202,14 +223,20 @@ def main():
           f"Avg trade: {pnl/total:+.2f}$   Max loss: {df['pnl'].min():+.2f}$")
 
     # ── by group ─────────────────────────────────────────────────────────────
+    crypto_df = df[df["symbol"].isin(CRYPTO_SYMBOLS)]
+    metals_df = df[~df["symbol"].isin(FOREX_SYMBOLS) & ~df["symbol"].isin(CRYPTO_SYMBOLS)]
     if len(forex_df):
         fw = (forex_df["pnl"] > 0).sum()
-        print(f"\nForex  ZScoreAdx(25/2.0): {len(forex_df):>2} trades  "
+        print(f"\nForex  ZScoreAdx(25/2.0):  {len(forex_df):>2} trades  "
               f"{fw/len(forex_df)*100:.0f}% win  {forex_df['pnl'].sum():>+8.2f}$")
-    if len(other_df):
-        ow = (other_df["pnl"] > 0).sum()
-        print(f"Other  ZScoreAdx(20/1.5): {len(other_df):>2} trades  "
-              f"{ow/len(other_df)*100:.0f}% win  {other_df['pnl'].sum():>+8.2f}$")
+    if len(crypto_df):
+        cw = (crypto_df["pnl"] > 0).sum()
+        print(f"Crypto BreakoutADX(25/r5): {len(crypto_df):>2} trades  "
+              f"{cw/len(crypto_df)*100:.0f}% win  {crypto_df['pnl'].sum():>+8.2f}$")
+    if len(metals_df):
+        mw = (metals_df["pnl"] > 0).sum()
+        print(f"Metals ZScoreAdx(20/1.5):  {len(metals_df):>2} trades  "
+              f"{mw/len(metals_df)*100:.0f}% win  {metals_df['pnl'].sum():>+8.2f}$")
 
     # ── trade log ────────────────────────────────────────────────────────────
     print(f"\n{'#':<3} {'Symbol':<10} {'Dir':<5} {'Date':<12} "
