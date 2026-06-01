@@ -52,7 +52,7 @@ def main():
         for profile_name, strategy in strategies.items():
             profile = PROFILES[profile_name]
             for symbol in profile["symbols"]:
-                df = fetch_ohlcv(symbol, outputsize=100)
+                df = fetch_ohlcv(symbol, outputsize=250)
                 if df is None or df.empty:
                     print(f"{symbol}: no data")
                     continue

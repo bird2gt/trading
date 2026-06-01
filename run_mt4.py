@@ -3,6 +3,7 @@ import sys
 import socket
 import time
 import threading
+import logging
 from datetime import date, datetime, timezone
 import requests
 import pandas as pd
@@ -17,6 +18,10 @@ from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
 from forecasts.reader import get_bias
 from broker.mt4_bridge import run_server
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 BRIDGE_URL = "http://127.0.0.1:8000"
 _bridge_session = requests.Session()
@@ -170,7 +175,7 @@ def _calc_lots(entry: float, sl: float, symbol: str) -> float:
         try:
             usdchf = fetch_ohlcv("USD/CHF", outputsize=1, interval="1h")["close"].iloc[-1]
         except Exception:
-            usdchf = 0.80               # fallback ≈ recent USD/CHF
+            raise RuntimeError("Could not fetch USD/CHF rate for EUR/CHF lot calculation")
         pip_value = 10.0 / usdchf
     else:
         pip_value = cfg["pip_value"]
@@ -206,10 +211,15 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     base_lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
     size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
 
-    _bridge_session.post(f"{BRIDGE_URL}/signal", json={
-        "symbol": mt4_symbol, "action": action,
-        "lots": base_lots, "sl": sl, "tp": tp1,
-    }, timeout=3)
+    try:
+        resp = _bridge_session.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": action,
+            "lots": base_lots, "sl": sl, "tp": tp1,
+        }, timeout=5)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] signal POST failed for {td_symbol}: {e}")
+        return
     _active_signals[td_symbol] = action
     _entry_prices[td_symbol] = entry
     tp_note = " [fib TP2=chandelier]" if tp2_price is not None else (" [fib]" if tp_price is not None else "")
@@ -222,7 +232,7 @@ def _send_close(symbol: str, reason: str):
         _bridge_session.post(f"{BRIDGE_URL}/signal", json={
             "symbol": mt4_symbol, "action": "CLOSE",
             "lots": 0.01, "sl": 0.0, "tp": 0.0,
-        }, timeout=3)
+        }, timeout=5)
         _active_signals[symbol] = "NONE"
         _entry_prices.pop(symbol, None)
         print(f"{symbol}: CLOSE — {reason}")
@@ -291,6 +301,7 @@ def _sleep_until_open():
 def trading_loop():
     global _last_digest_date, _last_calendar_date, _last_journal_sync
     while True:
+        logger.info("Starting new poll cycle...")
         _sleep_until_open()
         today = date.today()
         if datetime.now(timezone.utc).hour == 5 and _last_calendar_date != today:
@@ -424,7 +435,16 @@ def _load_active_signals():
         action = pos.get("action")
         if symbol and action in ("BUY", "SELL"):
             live_signals[symbol] = action
-            live_entries[symbol] = float(pos.get("open_price", 0.0))
+            open_price = pos.get("open_price")
+            if open_price:
+                live_entries[symbol] = float(open_price)
+
+    # Guard: if MT4 returned no positions but we track open trades, bridge
+    # may be mid-restart — keep existing state to avoid duplicate entries.
+    known_open = any(v in ("BUY", "SELL") for v in _active_signals.values())
+    if not positions and known_open:
+        print(f"[WARN] /positions returned empty but tracking {sum(1 for v in _active_signals.values() if v in ('BUY','SELL'))} open signals — keeping state")
+        return
 
     stale = {
         symbol: action
