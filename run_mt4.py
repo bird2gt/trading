@@ -135,7 +135,7 @@ def _active_symbols() -> list[str]:
         session = LONDON_SYMBOLS + US_SYMBOLS            # 12:30-21:00: EUR, GBP, CHF + XAU
     else:
         session = LONDON_SYMBOLS                         # 08:00-12:30: EUR, GBP, CHF
-    return ALWAYS_SYMBOLS + session
+    return list(dict.fromkeys(ALWAYS_SYMBOLS + session))
 
 
 def _daily_drawdown_hit() -> bool:
@@ -233,10 +233,16 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
 
     if action == "BUY":
         sl  = round(entry - sl_mult * atr, 5)
-        tp1 = tp_price if tp_price is not None else round(entry + tp_mult * atr, 5)
+        if tp_price is not None and tp_price > entry:
+            tp1 = tp_price
+        else:
+            tp1 = round(entry + tp_mult * atr, 5)
     elif action == "SELL":
         sl  = round(entry + sl_mult * atr, 5)
-        tp1 = tp_price if tp_price is not None else round(entry - tp_mult * atr, 5)
+        if tp_price is not None and tp_price < entry:
+            tp1 = tp_price
+        else:
+            tp1 = round(entry - tp_mult * atr, 5)
     else:
         sl = tp1 = 0.0
 
@@ -254,7 +260,7 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
         return
     _active_signals[td_symbol] = action
     _entry_prices[td_symbol] = entry
-    tp_note = " [fib]" if tp_price is not None else ""
+    tp_note = " [fib]" if tp_price is not None and tp1 == tp_price else ""
     print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
 
 
@@ -502,13 +508,6 @@ def _load_active_signals():
             if open_price:
                 live_entries[symbol] = float(open_price)
 
-    # Guard: if MT4 returned no positions but we track open trades, bridge
-    # may be mid-restart — keep existing state to avoid duplicate entries.
-    known_open = any(v in ("BUY", "SELL") for v in _active_signals.values())
-    if not positions and known_open:
-        print(f"[WARN] /positions returned empty but tracking {sum(1 for v in _active_signals.values() if v in ('BUY','SELL'))} open signals — keeping state")
-        return
-
     stale = {
         symbol: action
         for symbol, action in _active_signals.items()
@@ -526,7 +525,7 @@ def _load_active_signals():
 
 
 def _clear_signal_files():
-    all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
+    all_symbols = list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS))
     for symbol in all_symbols:
         mt4_symbol = symbol.replace("/", "")
         try:

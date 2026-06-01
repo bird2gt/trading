@@ -1,7 +1,7 @@
 """
 Two-week walk-forward simulation.
 Forex:   Forex profile strategy — ZScoreAdx(adx≥25, z≥2.0)
-Metals:  Metals profile strategy — MeanReversion + max ADX filter
+Metals:  MetalsSession profile — XAU ZScoreAdxTrend, XAG Silver+GSR
 Crypto:  Crypto profile strategy — BreakoutADX(adx≥25, rising≥5)
 Signal on closed H4 bars only (df_h4.iloc[:-1]) — no repaint.
 """
@@ -10,7 +10,7 @@ import pandas as pd
 from history.fetcher import fetch_ohlcv
 from strategy.crypto import Crypto
 from strategy.forex import Forex
-from strategy.metals import Metals
+from strategy.metals import MetalsSession
 from strategy.sma_cross import SMACross  # exit MA only, not used for signals
 
 SYMBOLS = [
@@ -30,10 +30,8 @@ STRATEGY_FOREX = Forex(
     z_period=20, z_entry=2.0,
     adx_period=14, adx_threshold=25.0,
 )
-STRATEGY_METALS = Metals(
-    period=20, std_mult=2.0,
-    adx_period=14, max_adx=25.0,
-)
+STRATEGY_METALS_XAU = MetalsSession("XAUUSD")
+STRATEGY_METALS_XAG = MetalsSession("XAGUSD")
 STRATEGY_CRYPTO = Crypto(
     period=20, adx_period=14, adx_threshold=25.0,
     vol_ma=20, vol_mult=1.2, adx_rising_bars=5,
@@ -62,10 +60,13 @@ PIP_CONFIG = {
 SL_MULT = {
     "EUR/USD": 1.5, "USD/CHF": 1.5, "EUR/CHF": 1.5,
     "AUD/USD": 1.5, "USD/CAD": 1.5, "GBP/USD": 2.0,
-    "USD/JPY": 1.5, "XAU/USD": 1.0, "XAG/USD": 1.0,
+    "USD/JPY": 1.5, "XAU/USD": 1.5, "XAG/USD": 2.0,
     "BTC/USD": 1.0, "ETH/USD": 1.0,
 }
-TP_MULT = 1.5  # 1:1 R:R for mean-reversion; chandelier takes over in live
+TP_MULT = {
+    "XAG/USD": 2.0,
+}
+DEFAULT_TP_MULT = 1.5
 
 
 def _atr_series(df: pd.DataFrame) -> pd.Series:
@@ -88,14 +89,17 @@ def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -
     return round(pips * cfg["pip_value"] * lots, 2)
 
 
-def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
+def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_xau_h4: pd.DataFrame | None = None) -> list[dict]:
     if symbol in FOREX_SYMBOLS:
         strategy = STRATEGY_FOREX
     elif symbol in CRYPTO_SYMBOLS:
         strategy = STRATEGY_CRYPTO
+    elif symbol == "XAG/USD":
+        strategy = STRATEGY_METALS_XAG
     else:
-        strategy = STRATEGY_METALS
+        strategy = STRATEGY_METALS_XAU
     sl_mult  = SL_MULT.get(symbol, 1.5)
+    tp_mult  = TP_MULT.get(symbol, DEFAULT_TP_MULT)
     atr      = _atr_series(df_h4)
     trades   = []
     in_trade = False
@@ -134,7 +138,11 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
         if i == 0:
             continue
         df_closed = df_h4.iloc[:i]  # closed bars only — no repaint
-        signal    = strategy.generate_signal(df_closed)
+        if symbol == "XAG/USD" and df_xau_h4 is not None:
+            xau_closed = df_xau_h4[df_xau_h4.index <= df_closed.index[-1]]
+            signal = strategy.generate_signal(df_closed, df_xau=xau_closed)
+        else:
+            signal = strategy.generate_signal(df_closed)
         if signal == 0:
             continue
 
@@ -145,8 +153,8 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
 
         sl = (entry_price - sl_mult * atr_val if signal == 1
               else entry_price + sl_mult * atr_val)
-        tp = (entry_price + TP_MULT * atr_val if signal == 1
-              else entry_price - TP_MULT * atr_val)
+        tp = (entry_price + tp_mult * atr_val if signal == 1
+              else entry_price - tp_mult * atr_val)
 
         lots      = _lot_size(entry_price, sl, symbol, balance)
         direction = signal
@@ -158,7 +166,7 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
 
 def main():
     print("2-week walk-forward simulation\n"
-          "Forex: Forex profile  Metals: Metals profile  Crypto: Crypto profile\n"
+          "Forex: Forex profile  Metals: MetalsSession profile  Crypto: Crypto profile\n"
           f"$10k balance · 2% risk/trade · "
           f"{TWO_WEEKS_H4} H4 bars + {WARMUP_H4} warmup\n")
 
@@ -174,18 +182,19 @@ def main():
             elif sym in CRYPTO_SYMBOLS:
                 tag = "BreakoutADX(25/r5)"
             else:
-                tag = "MetalsMR(maxADX25)"
+                tag = "MetalsSession"
             print(f"ok  [{tag}]  window from {wstart}")
         except Exception as e:
             print(f"FAIL — {e}")
         time.sleep(1)
 
     all_trades = []
+    df_xau_h4 = data.get("XAU/USD")
     for sym, df_h4 in data.items():
         if len(df_h4) < WARMUP_H4 + 10:
             print(f"{sym}: not enough data, skipping")
             continue
-        all_trades.extend(backtest_symbol(sym, df_h4))
+        all_trades.extend(backtest_symbol(sym, df_h4, df_xau_h4=df_xau_h4))
 
     if not all_trades:
         print("\nNo trades.")
@@ -204,7 +213,7 @@ def main():
         elif sym in CRYPTO_SYMBOLS:
             tag = "BreakoutADX(25/r5)"
         else:
-            tag = "MetalsMR(maxADX25)"
+            tag = "MetalsSession"
         if sub.empty:
             print(f"{sym:<10} {tag:<20} {'–':>3}")
             continue
@@ -235,7 +244,7 @@ def main():
               f"{cw/len(crypto_df)*100:.0f}% win  {crypto_df['pnl'].sum():>+8.2f}$")
     if len(metals_df):
         mw = (metals_df["pnl"] > 0).sum()
-        print(f"Metals MetalsMR(maxADX25): {len(metals_df):>2} trades  "
+        print(f"Metals MetalsSession:      {len(metals_df):>2} trades  "
               f"{mw/len(metals_df)*100:.0f}% win  {metals_df['pnl'].sum():>+8.2f}$")
 
     # ── trade log ────────────────────────────────────────────────────────────
