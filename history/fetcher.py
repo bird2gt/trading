@@ -65,6 +65,67 @@ _FINAGE_MAP = {
 _finage_cache: dict = {}
 _FINAGE_CACHE_TTL = 14400  # 4 hours — matches bar period; ~12 req/day × 30 = 360/month
 
+# Binance: free, no key — crypto only, all intervals, up to 1000 bars
+_BINANCE_MAP = {
+    "BTC/USD": "BTCUSDT",
+    "ETH/USD": "ETHUSDT",
+}
+_BINANCE_INTERVAL = {
+    "15min": "15m",
+    "1h":    "1h",
+    "4h":    "4h",
+    "1day":  "1d",
+}
+_binance_cache: dict = {}
+
+# Tiingo: free key — crypto all intervals, forex daily only
+_TIINGO_CRYPTO_MAP = {
+    "BTC/USD": "btcusd",
+    "ETH/USD": "ethusd",
+}
+_TIINGO_FX_MAP = {
+    "EUR/USD": "eurusd",
+    "GBP/USD": "gbpusd",
+    "USD/CHF": "usdchf",
+    "USD/JPY": "usdjpy",
+    "USD/CAD": "usdcad",
+    "AUD/USD": "audusd",
+    "EUR/CHF": "eurchf",
+}
+_TIINGO_RESAMPLE = {
+    "15min": "15min",
+    "1h":    "1hour",
+    "4h":    "4hour",
+    "1day":  "1day",
+}
+_tiingo_cache: dict = {}
+
+# Polygon: free key, 5 req/min — forex + crypto + metals daily; intraday on paid
+_POLYGON_MAP = {
+    "EUR/USD":  "C:EURUSD",
+    "GBP/USD":  "C:GBPUSD",
+    "USD/CHF":  "C:USDCHF",
+    "USD/JPY":  "C:USDJPY",
+    "USD/CAD":  "C:USDCAD",
+    "AUD/USD":  "C:AUDUSD",
+    "EUR/CHF":  "C:EURCHF",
+    "XAU/USD":  "C:XAUUSD",
+    "XAG/USD":  "C:XAGUSD",
+    "BTC/USD":  "X:BTCUSD",
+    "ETH/USD":  "X:ETHUSD",
+    "WTI/USD":  "C:WTIUSD",
+    "BRENT/USD": "C:BCOUSD",
+}
+_POLYGON_TIMESPAN = {
+    "15min": (15, "minute"),
+    "1h":    (1,  "hour"),
+    "4h":    (4,  "hour"),
+    "1day":  (1,  "day"),
+}
+_polygon_cache: dict = {}
+_polygon_last_req: float = 0.0
+_POLYGON_MIN_GAP = 12.5  # 5 req/min
+
 # Stooq: free, no key, CSV download
 _STOOQ_MAP = {
     "EUR/USD": "eurusd",
@@ -90,7 +151,8 @@ _SOURCE_WARN_TTL = 600  # warn at most once per 10 min per (source, symbol, inte
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
-    for source in (_fetch_yahoo, _fetch_twelve, _fetch_alpha, _fetch_finage, _fetch_stooq):
+    for source in (_fetch_yahoo, _fetch_binance, _fetch_twelve, _fetch_tiingo,
+                   _fetch_alpha, _fetch_finage, _fetch_polygon, _fetch_stooq):
         try:
             df = source(symbol, interval, outputsize)
             if not df.empty:
@@ -329,6 +391,151 @@ def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if interval == "4h":
         df = _resample_4h(df)
 
+    return df
+
+
+def _fetch_binance(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    ticker = _BINANCE_MAP.get(symbol)
+    if ticker is None:
+        return pd.DataFrame()
+
+    binance_i = _BINANCE_INTERVAL.get(interval)
+    if binance_i is None:
+        return pd.DataFrame()
+
+    cache_key = (symbol, interval)
+    cached = _binance_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
+        return cached[0]
+
+    resp = requests.get(
+        "https://api.binance.com/api/v3/klines",
+        params={"symbol": ticker, "interval": binance_i, "limit": min(outputsize, 1000)},
+        timeout=15,
+    )
+    data = resp.json()
+    if not isinstance(data, list) or not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data, columns=[
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_vol", "trades", "taker_base", "taker_quote", "ignore",
+    ])
+    df.index = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(None)
+    df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
+
+    _binance_cache[cache_key] = (df, time.time())
+    return df
+
+
+def _fetch_tiingo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    api_key = os.environ.get("TIINGO_API_KEY", "")
+    if not api_key:
+        return pd.DataFrame()
+
+    cache_key = (symbol, interval)
+    cached = _tiingo_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
+        return cached[0]
+
+    headers = {"Authorization": f"Token {api_key}", "Content-Type": "application/json"}
+    now = pd.Timestamp.now("UTC")
+
+    if symbol in _TIINGO_CRYPTO_MAP:
+        ticker = _TIINGO_CRYPTO_MAP[symbol]
+        resample = _TIINGO_RESAMPLE.get(interval)
+        if resample is None:
+            return pd.DataFrame()
+        start = (now - pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+        resp = requests.get(
+            "https://api.tiingo.com/tiingo/crypto/prices",
+            params={"tickers": ticker, "startDate": start, "resampleFreq": resample},
+            headers=headers,
+            timeout=15,
+        )
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            return pd.DataFrame()
+        rows = data[0].get("priceData", [])
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        df.index = pd.to_datetime(df["date"]).dt.tz_convert(None)
+        df = df.rename(columns={"open": "open", "high": "high", "low": "low",
+                                 "close": "close", "volumeNotional": "volume"})
+
+    elif symbol in _TIINGO_FX_MAP and interval == "1day":
+        ticker = _TIINGO_FX_MAP[symbol]
+        start = (now - pd.Timedelta(days=730)).strftime("%Y-%m-%d")
+        resp = requests.get(
+            f"https://api.tiingo.com/tiingo/fx/{ticker}/prices",
+            params={"startDate": start, "resampleFreq": "1Day"},
+            headers=headers,
+            timeout=15,
+        )
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df.index = pd.to_datetime(df["date"]).dt.tz_convert(None)
+        df = df.rename(columns={"open": "open", "high": "high", "low": "low", "close": "close"})
+        df["volume"] = 0.0
+    else:
+        return pd.DataFrame()
+
+    df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
+    _tiingo_cache[cache_key] = (df, time.time())
+    return df
+
+
+def _fetch_polygon(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    global _polygon_last_req
+    api_key = os.environ.get("POLYGON_API_KEY", "")
+    if not api_key:
+        return pd.DataFrame()
+
+    ticker = _POLYGON_MAP.get(symbol)
+    if ticker is None:
+        return pd.DataFrame()
+
+    mult, timespan = _POLYGON_TIMESPAN.get(interval, (None, None))
+    if mult is None:
+        return pd.DataFrame()
+
+    cache_key = (symbol, interval)
+    cached = _polygon_cache.get(cache_key)
+    if cached and time.time() - cached[1] < _BAR_TTL.get(interval, 14400):
+        return cached[0]
+
+    gap = _POLYGON_MIN_GAP - (time.time() - _polygon_last_req)
+    if gap > 0:
+        time.sleep(gap)
+
+    now = pd.Timestamp.now("UTC")
+    days_back = {"15min": 30, "1h": 90, "4h": 180, "1day": 730}.get(interval, 90)
+    from_date = (now - pd.Timedelta(days=days_back)).strftime("%Y-%m-%d")
+    to_date = now.strftime("%Y-%m-%d")
+
+    resp = requests.get(
+        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{mult}/{timespan}/{from_date}/{to_date}",
+        params={"adjusted": "true", "sort": "asc", "limit": min(outputsize, 50000), "apiKey": api_key},
+        timeout=15,
+    )
+    _polygon_last_req = time.time()
+    data = resp.json()
+    results = data.get("results") or []
+    if not results:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(results)
+    df.index = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert(None)
+    df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
+    df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
+
+    if interval == "4h":
+        df = _resample_4h(df)
+
+    _polygon_cache[cache_key] = (df, time.time())
     return df
 
 

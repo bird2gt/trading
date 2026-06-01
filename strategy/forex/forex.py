@@ -1,6 +1,7 @@
 import pandas as pd
 
 from .base import BaseStrategy
+from .breakout_adx import BreakoutAdx
 from .z_score_adx import ZScoreAdx
 
 
@@ -15,6 +16,18 @@ class Forex(BaseStrategy):
             adx_threshold=adx_threshold,
             z_signal_period=z_signal_period,
         )
+        self.breakout = BreakoutAdx(
+            period=20,
+            adx_period=adx_period,
+            adx_threshold=20.0,
+            adx_rising_bars=3,
+        )
+        self.by_symbol = {
+            "USD/CAD": self.breakout,
+        }
 
     def generate_signal(self, df: pd.DataFrame, **kwargs) -> int:
-        return self.z_score_adx.generate_signal(df, **kwargs)
+        params = dict(kwargs)
+        symbol = params.pop("symbol", None)
+        strategy = self.by_symbol.get(symbol, self.z_score_adx)
+        return strategy.generate_signal(df, **params)

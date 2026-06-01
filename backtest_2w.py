@@ -142,7 +142,7 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_xau_h4: pd.DataFrame | 
             xau_closed = df_xau_h4[df_xau_h4.index <= df_closed.index[-1]]
             signal = strategy.generate_signal(df_closed, df_xau=xau_closed)
         else:
-            signal = strategy.generate_signal(df_closed)
+            signal = strategy.generate_signal(df_closed, symbol=symbol)
         if signal == 0:
             continue
 

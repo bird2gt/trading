@@ -392,7 +392,7 @@ def trading_loop():
                     df_signal = df_closed
                     asset_profile = SYMBOL_PROFILES.get(symbol)
                     if symbol in FOREX_SYMBOLS:
-                        signal = STRATEGY_FOREX.generate_signal(df_closed)
+                        signal = STRATEGY_FOREX.generate_signal(df_closed, symbol=symbol)
                     elif asset_profile == "crypto":
                         signal = STRATEGY_CRYPTO.generate_signal(df_closed)
                     elif asset_profile == "metal":
