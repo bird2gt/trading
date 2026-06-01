@@ -6,6 +6,15 @@ from config.settings import BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_TESTNET
 
 BASE_URL = "https://api-testnet.bybit.com" if BYBIT_TESTNET else "https://api.bybit.com"
 
+# Bybit linear perpetual symbols differ from our internal "BTC/USD" notation
+_BYBIT_SYMBOL_MAP = {
+    "BTC/USD": "BTCUSDT",
+    "ETH/USD": "ETHUSDT",
+}
+
+def _bybit_symbol(symbol: str) -> str:
+    return _BYBIT_SYMBOL_MAP.get(symbol, symbol.replace("/", ""))
+
 
 def _sign(params: dict) -> dict:
     ts = str(int(time.time() * 1000))
@@ -61,32 +70,44 @@ def get_balance(coin: str = "USDT") -> float:
     return 0.0
 
 
-def open_order(symbol: str, direction: int, qty: float, sl: float = 0) -> dict:
+def open_order(symbol: str, direction: int, qty: float, sl: float = 0, tp: float = 0) -> dict:
     side = "Buy" if direction == 1 else "Sell"
     body = {
-        "category": "spot",
-        "symbol": symbol.replace("/", ""),
+        "category": "linear",
+        "symbol": _bybit_symbol(symbol),
         "side": side,
         "orderType": "Market",
         "qty": str(qty),
+        "positionIdx": 0,  # one-way mode
     }
     if sl > 0:
         body["stopLoss"] = str(sl)
+    if tp > 0:
+        body["takeProfit"] = str(tp)
     return _post("/v5/order/create", body)
 
 
 def get_positions(symbol: str = "") -> list:
     params = {"category": "linear"}
     if symbol:
-        params["symbol"] = symbol.replace("/", "")
+        params["symbol"] = _bybit_symbol(symbol)
     return _get("/v5/position/list", params).get("list", [])
 
 
 def close_position(symbol: str) -> dict:
+    bsym = _bybit_symbol(symbol)
     positions = get_positions(symbol)
     for pos in positions:
-        if float(pos["size"]) == 0:
+        if float(pos.get("size", 0)) == 0:
             continue
-        direction = -1 if pos["side"] == "Buy" else 1
-        return open_order(symbol, direction, float(pos["size"]))
+        side = "Sell" if pos["side"] == "Buy" else "Buy"
+        return _post("/v5/order/create", {
+            "category": "linear",
+            "symbol": bsym,
+            "side": side,
+            "orderType": "Market",
+            "qty": pos["size"],
+            "positionIdx": 0,
+            "reduceOnly": True,
+        })
     return {}

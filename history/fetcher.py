@@ -84,6 +84,10 @@ _STOOQ_FAILURE_TTL = 1800
 _STALE_HOURS = {"15min": 1, "1h": 2, "4h": 8, "1day": 48}
 
 
+_source_warn_at: dict[tuple, float] = {}
+_SOURCE_WARN_TTL = 600  # warn at most once per 10 min per (source, symbol, interval)
+
+
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
     for source in (_fetch_yahoo, _fetch_twelve, _fetch_alpha, _fetch_finage, _fetch_stooq):
@@ -91,7 +95,12 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
             df = source(symbol, interval, outputsize)
             if not df.empty:
                 frames.append(df)
-        except Exception:
+        except Exception as e:
+            key = (source.__name__, symbol, interval)
+            now = time.time()
+            if now - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
+                print(f"[WARN] {source.__name__}({symbol}, {interval}): {type(e).__name__}: {e}")
+                _source_warn_at[key] = now
             continue
 
     if not frames:

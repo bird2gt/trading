@@ -363,10 +363,12 @@ def trading_loop():
                     tp_price = None
                     tp2_price = None
                 else:
-                    df_h4 = fetch_ohlcv(symbol, outputsize=220, interval="4h")
+                    df_h4 = fetch_ohlcv(symbol, outputsize=221, interval="4h")
                     df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
-                    df_signal = df_h4
-                    signal = STRATEGY.generate_signal(df_h4, df_trend=df_d1)
+                    # Drop the last (forming) bar so signal is based on closed bars only
+                    df_closed = df_h4.iloc[:-1]
+                    df_signal = df_closed
+                    signal = STRATEGY.generate_signal(df_closed, df_trend=df_d1)
                     sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
@@ -378,15 +380,15 @@ def trading_loop():
 
                 # market structure filter (SMA mode only)
                 if not in_news_window:
-                    struct = market_structure(df_h4)
+                    struct = market_structure(df_closed)
                     if signal == 1 and struct == -1:
                         print(f"{symbol}: BUY blocked — bearish structure (LH/LL)")
                         continue
                     if signal == -1 and struct == 1:
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
-                    tp_price  = fib_tp(df_h4, signal, level=1.272)
-                    tp2_price = fib_tp(df_h4, signal, level=1.618)
+                    tp_price  = fib_tp(df_closed, signal, level=1.272)
+                    tp2_price = fib_tp(df_closed, signal, level=1.618)
 
                 blocked, event_title = is_high_impact_soon(symbol)
                 if blocked:
@@ -425,8 +427,10 @@ def trading_loop():
                     print(f"{symbol}: {action} blocked by correlation")
                     continue
 
-                send_signal(symbol, action, df_signal, size_mult=size_mult,
-                            sl_mult=sl_mult, tp_mult=tp_mult, tp_price=tp_price, tp2_price=tp2_price)
+                # Pass df_h4 (with forming bar) so ATR/entry use the latest price
+                send_signal(symbol, action, df_h4 if not in_news_window else df_signal,
+                            size_mult=size_mult, sl_mult=sl_mult, tp_mult=tp_mult,
+                            tp_price=tp_price, tp2_price=tp2_price)
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")
