@@ -13,6 +13,7 @@ from history.calendar import is_high_impact_soon, send_calendar_to_telegram
 from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout
 from strategy.structure import market_structure, fib_tp
+from strategy.forex.z_score_adx import ZScoreAdx
 from analytics.sentiment import analyze_sentiment
 from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
@@ -85,8 +86,17 @@ ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
 ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
 
-STRATEGY = SMACross(fast=5, slow=20)
-BREAKOUT_STRATEGY = Breakout(period=8)  # 8 × 15min = 2h pre-news range
+STRATEGY = SMACross(fast=5, slow=20)           # metals + crypto, and 1h early-exit MA
+STRATEGY_FOREX = ZScoreAdx(                    # forex: pullback to EMA200 in ADX trend
+    z_period=20, z_entry=2.0,
+    adx_period=14, ema_period=200, adx_threshold=25.0,
+)
+BREAKOUT_STRATEGY = Breakout(period=8)         # 8 × 15min = 2h pre-news range
+
+FOREX_SYMBOLS = {
+    "EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF",
+    "AUD/USD", "USD/JPY", "USD/CAD",
+}
 
 CORR_GROUPS = [
     {"EUR/USD", "GBP/USD"},        # положительная корреляция: блокировать одинаковые действия
@@ -368,7 +378,10 @@ def trading_loop():
                     # Drop the last (forming) bar so signal is based on closed bars only
                     df_closed = df_h4.iloc[:-1]
                     df_signal = df_closed
-                    signal = STRATEGY.generate_signal(df_closed, df_trend=df_d1)
+                    if symbol in FOREX_SYMBOLS:
+                        signal = STRATEGY_FOREX.generate_signal(df_closed)
+                    else:
+                        signal = STRATEGY.generate_signal(df_closed, df_trend=df_d1)
                     sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
