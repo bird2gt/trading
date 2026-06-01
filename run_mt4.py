@@ -14,7 +14,7 @@ from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout as NewsBreakout
 from strategy.crypto import Crypto
 from strategy.forex import Forex
-from strategy.metals import Metals
+from strategy.metals import MetalsSession
 from strategy.structure import market_structure, fib_tp
 from analytics.sentiment import analyze_sentiment
 from analytics.fear_greed import get_value as get_fg_value
@@ -76,9 +76,10 @@ PIP_CONFIG = {
 
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
-ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]
-LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
-US_SYMBOLS     = ["XAU/USD"]  # gold active during full US session
+ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]   # monitored for early-exit; MetalsSession returns 0 here
+LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY",
+                  "XAU/USD", "XAG/USD"]
+US_SYMBOLS     = ["XAU/USD", "XAG/USD"]
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
 # Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
@@ -96,7 +97,8 @@ STRATEGY_FOREX = Forex(                        # profile strategy: forex
 )
 STRATEGY_CRYPTO = Crypto(period=20, adx_period=14, adx_threshold=25.0,
                          vol_ma=20, vol_mult=1.2, adx_rising_bars=5)  # matches backtest
-STRATEGY_METALS = Metals(period=20, std_mult=2.0, adx_period=14, max_adx=25.0)
+STRATEGY_METALS_XAU = MetalsSession("XAUUSD")
+STRATEGY_METALS_XAG = MetalsSession("XAGUSD")
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
@@ -388,12 +390,20 @@ def trading_loop():
                     elif asset_profile == "crypto":
                         signal = STRATEGY_CRYPTO.generate_signal(df_closed)
                     elif asset_profile == "metal":
-                        signal = STRATEGY_METALS.generate_signal(df_closed)
+                        if symbol == "XAG/USD":
+                            df_xau_h4 = fetch_ohlcv("XAU/USD", outputsize=221, interval="4h")
+                            signal = STRATEGY_METALS_XAG.generate_signal(df_closed, df_xau=df_xau_h4.iloc[:-1])
+                        else:
+                            signal = STRATEGY_METALS_XAU.generate_signal(df_closed)
                     else:
                         signal = 0
                     sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
+                    # wider ATR multipliers for metals (validated by backtest)
+                    if asset_profile == "metal":
+                        sl_mult = 2.0 if symbol == "XAG/USD" else 1.5
+                        tp_mult = 2.0 if symbol == "XAG/USD" else ATR_TP1_MULT
 
                 if signal == 0:
                     print(f"{symbol}: no signal")
@@ -408,7 +418,7 @@ def trading_loop():
                     if signal == -1 and struct == 1:
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
-                    tp_price  = fib_tp(df_closed, signal, level=1.272)
+                    tp_price = fib_tp(df_closed, signal, level=1.272) if asset_profile != "metal" else None
 
                 # Fear & Greed filter — crypto only, trend-following mode
                 # backtest shows: buy in Greed(≥50)=69%win, Neutral=29%win → block neutral/fear longs
