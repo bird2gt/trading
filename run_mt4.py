@@ -107,13 +107,18 @@ FOREX_SYMBOLS = {
 }
 
 CORR_GROUPS = [
-    {"EUR/USD", "GBP/USD"},        # положительная корреляция: блокировать одинаковые действия
+    {"EUR/USD", "GBP/USD", "AUD/USD"},  # USD quote pairs: block duplicated USD shorts/longs
+    {"USD/CHF", "USD/CAD"},             # USD base pairs: block duplicated USD exposure
     {"XAU/USD", "XAG/USD"},        # положительная корреляция: блокировать одинаковые действия
 ]
 # Обратная корреляция: блокировать ПРОТИВОПОЛОЖНЫЕ действия (BUY одного = SELL другого = двойной шорт USD)
 INVERSE_CORR_GROUPS = [
     {"EUR/USD", "USD/CHF"},        # EUR/USD↑ = USD↓ = USD/CHF↓
     {"GBP/USD", "USD/CHF"},        # GBP/USD↑ = USD↓ = USD/CHF↓
+    {"AUD/USD", "USD/CHF"},        # AUD/USD↑ = USD↓ = USD/CHF↓
+    {"EUR/USD", "USD/CAD"},        # EUR/USD↑ = USD↓ = USD/CAD↓
+    {"GBP/USD", "USD/CAD"},        # GBP/USD↑ = USD↓ = USD/CAD↓
+    {"AUD/USD", "USD/CAD"},        # AUD/USD↑ = USD↓ = USD/CAD↓
 ]
 _MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_PROFILES}
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"

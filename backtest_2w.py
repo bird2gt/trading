@@ -1,6 +1,6 @@
 """
 Two-week walk-forward simulation.
-Forex:   Forex profile strategy — ZScoreAdx(adx≥25, z≥2.0)
+Forex:   pair-specific profile strategies
 Metals:  MetalsSession profile — XAU ZScoreAdxTrend, XAG Silver+GSR
 Crypto:  Crypto profile strategy — BreakoutADX(adx≥25, rising≥5)
 Signal on closed H4 bars only (df_h4.iloc[:-1]) — no repaint.
@@ -67,6 +67,14 @@ TP_MULT = {
     "XAG/USD": 2.0,
 }
 DEFAULT_TP_MULT = 1.5
+
+
+def _strategy_tag(symbol: str) -> str:
+    if symbol in FOREX_SYMBOLS:
+        return STRATEGY_FOREX.strategy_name(symbol)
+    if symbol in CRYPTO_SYMBOLS:
+        return "BreakoutADX(25/r5)"
+    return "MetalsSession"
 
 
 def _atr_series(df: pd.DataFrame) -> pd.Series:
@@ -177,12 +185,7 @@ def main():
             df_h4 = fetch_ohlcv(sym, outputsize=TOTAL_H4 + 1, interval="4h")
             data[sym] = df_h4
             wstart = df_h4.index[-TWO_WEEKS_H4].date()
-            if sym in FOREX_SYMBOLS:
-                tag = "ZScoreAdx(25/2.0)"
-            elif sym in CRYPTO_SYMBOLS:
-                tag = "BreakoutADX(25/r5)"
-            else:
-                tag = "MetalsSession"
+            tag = _strategy_tag(sym)
             print(f"ok  [{tag}]  window from {wstart}")
         except Exception as e:
             print(f"FAIL — {e}")
@@ -208,12 +211,7 @@ def main():
     print("─" * 58)
     for sym in SYMBOLS:
         sub  = df[df["symbol"] == sym]
-        if sym in FOREX_SYMBOLS:
-            tag = "ZScoreAdx(25/2.0)"
-        elif sym in CRYPTO_SYMBOLS:
-            tag = "BreakoutADX(25/r5)"
-        else:
-            tag = "MetalsSession"
+        tag = _strategy_tag(sym)
         if sub.empty:
             print(f"{sym:<10} {tag:<20} {'–':>3}")
             continue
@@ -236,7 +234,7 @@ def main():
     metals_df = df[~df["symbol"].isin(FOREX_SYMBOLS) & ~df["symbol"].isin(CRYPTO_SYMBOLS)]
     if len(forex_df):
         fw = (forex_df["pnl"] > 0).sum()
-        print(f"\nForex  ZScoreAdx(25/2.0):  {len(forex_df):>2} trades  "
+        print(f"\nForex  profile dispatch:   {len(forex_df):>2} trades  "
               f"{fw/len(forex_df)*100:.0f}% win  {forex_df['pnl'].sum():>+8.2f}$")
     if len(crypto_df):
         cw = (crypto_df["pnl"] > 0).sum()
