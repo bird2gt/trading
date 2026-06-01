@@ -37,22 +37,25 @@ def analyze_sentiment(symbol: str, headlines: list[str]) -> int:
 
     text = "\n".join(f"- {h}" for h in headlines)
 
-    message = _get_client().messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=10,
-        system="You are a forex market analyst. Reply with exactly one phrase.",
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Based on these news headlines, what is the outlook for {symbol}? "
-                f"Reply with only one of: "
-                f"strongly_bearish, mildly_bearish, neutral, mildly_bullish, strongly_bullish.\n\n{text}"
-            ),
-        }],
-    )
-
-    raw = message.content[0].text.strip().lower()
-    score = next((v for k, v in _SCORE_MAP.items() if k in raw), 0)
+    try:
+        message = _get_client().messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=10,
+            system="You are a forex market analyst. Reply with exactly one phrase.",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Based on these news headlines, what is the outlook for {symbol}? "
+                    f"Reply with only one of: "
+                    f"strongly_bearish, mildly_bearish, neutral, mildly_bullish, strongly_bullish.\n\n{text}"
+                ),
+            }],
+        )
+        raw = message.content[0].text.strip().lower()
+        score = next((v for k, v in _SCORE_MAP.items() if k in raw), 0)
+    except Exception as e:
+        print(f"[WARN] sentiment fallback neutral for {symbol}: {type(e).__name__}: {e}")
+        score = 0
 
     _cache[symbol] = (score, time.time())
     return score

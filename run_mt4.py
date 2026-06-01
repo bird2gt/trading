@@ -17,6 +17,7 @@ from strategy.forex import Forex
 from strategy.metals import Metals
 from strategy.structure import market_structure, fib_tp
 from analytics.sentiment import analyze_sentiment
+from analytics.fear_greed import get_value as get_fg_value
 from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
 from forecasts.reader import get_bias
@@ -223,7 +224,7 @@ def _atr(df: pd.DataFrame) -> float:
 
 def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0,
                 sl_mult: float = ATR_SL_MULT, tp_mult: float = ATR_TP1_MULT,
-                tp_price: float | None = None, tp2_price: float | None = None):
+                tp_price: float | None = None):
     mt4_symbol = td_symbol.replace("/", "")
     entry = df["close"].iloc[-1]
     atr = _atr(df)
@@ -251,7 +252,7 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
         return
     _active_signals[td_symbol] = action
     _entry_prices[td_symbol] = entry
-    tp_note = " [fib TP2=chandelier]" if tp2_price is not None else (" [fib]" if tp_price is not None else "")
+    tp_note = " [fib]" if tp_price is not None else ""
     print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
 
 
@@ -376,10 +377,8 @@ def trading_loop():
                     signal = BREAKOUT_STRATEGY.generate_signal(df_signal)
                     sl_mult = tp_mult = ATR_BREAKOUT_MULT
                     tp_price = None
-                    tp2_price = None
                 else:
                     df_h4 = fetch_ohlcv(symbol, outputsize=221, interval="4h")
-                    df_d1 = fetch_ohlcv(symbol, outputsize=60,  interval="1day")
                     # Drop the last (forming) bar so signal is based on closed bars only
                     df_closed = df_h4.iloc[:-1]
                     df_signal = df_closed
@@ -395,7 +394,6 @@ def trading_loop():
                     sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None
-                    tp2_price = None
 
                 if signal == 0:
                     print(f"{symbol}: no signal")
@@ -411,7 +409,19 @@ def trading_loop():
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
                     tp_price  = fib_tp(df_closed, signal, level=1.272)
-                    tp2_price = fib_tp(df_closed, signal, level=1.618)
+
+                # Fear & Greed filter — crypto only, trend-following mode
+                # backtest shows: buy in Greed(≥50)=69%win, Neutral=29%win → block neutral/fear longs
+                if asset_profile == "crypto" and not in_news_window:
+                    fg = get_fg_value(datetime.now(timezone.utc))
+                    if fg is not None:
+                        if signal == 1 and fg < 50:
+                            print(f"{symbol}: BUY blocked — F&G={fg} (Fear/Neutral, no bullish momentum)")
+                            continue
+                        if signal == -1 and fg >= 50:
+                            print(f"{symbol}: SELL blocked — F&G={fg} (Greed/Neutral, no bearish momentum)")
+                            continue
+                    print(f"{symbol}: F&G={fg} — {'allowed' if fg is not None else 'unavailable, skipping filter'}")
 
                 blocked, event_title = is_high_impact_soon(symbol)
                 if blocked:
@@ -453,7 +463,7 @@ def trading_loop():
                 # Pass df_h4 (with forming bar) so ATR/entry use the latest price
                 send_signal(symbol, action, df_h4 if not in_news_window else df_signal,
                             size_mult=size_mult, sl_mult=sl_mult, tp_mult=tp_mult,
-                            tp_price=tp_price, tp2_price=tp2_price)
+                            tp_price=tp_price)
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")

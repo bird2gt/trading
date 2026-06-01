@@ -57,6 +57,11 @@ void ReadSignal() {
     double tp1    = (n > 3) ? StringToDouble(parts[3]) : 0.0;
     if (lots <= 0) lots = LotSize;
 
+    if (action == "NONE") {
+        lastAction = "NONE";
+        return;
+    }
+
     // CLOSE must retry until flat — don't let the lastAction guard suppress it
     // (e.g. an OrderClose rejected near market close would otherwise never retry)
     if (action == "CLOSE") {
@@ -65,22 +70,29 @@ void ReadSignal() {
             _resetChandelier();
             Print("Signal applied: CLOSE");
         }
+        if (CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0) ClearSignalFile();
         lastAction = action;
         return;
     }
 
     if (action == lastAction) return;
 
+    bool applied = false;
     if (action == "BUY") {
         CloseAll(OP_SELL);
-        if (CountOrders(OP_BUY) == 0) { _resetChandelier(); OpenOrder(OP_BUY, lots, sl, tp1); }
+        if (CountOrders(OP_BUY) == 0) { _resetChandelier(); applied = OpenOrder(OP_BUY, lots, sl, tp1); }
+        else applied = true;
     } else if (action == "SELL") {
         CloseAll(OP_BUY);
-        if (CountOrders(OP_SELL) == 0) { _resetChandelier(); OpenOrder(OP_SELL, lots, sl, tp1); }
+        if (CountOrders(OP_SELL) == 0) { _resetChandelier(); applied = OpenOrder(OP_SELL, lots, sl, tp1); }
+        else applied = true;
     }
 
-    lastAction = action;
-    Print("Signal applied: ", action, " lots=", lots, " SL=", sl, " TP1=", tp1);
+    if (applied) {
+        ClearSignalFile();
+        lastAction = action;
+        Print("Signal applied: ", action, " lots=", lots, " SL=", sl, " TP1=", tp1);
+    }
 }
 
 
@@ -214,12 +226,23 @@ void WritePositions() {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-void OpenOrder(int type, double lots, double sl, double tp) {
+bool OpenOrder(int type, double lots, double sl, double tp) {
     double price = (type == OP_BUY) ? Ask : Bid;
     int ticket = OrderSend(Symbol(), type, lots, price, Slippage, sl, tp,
                            "SB_full", 0, 0,
                            (type == OP_BUY) ? clrBlue : clrRed);
-    if (ticket < 0) Print("OrderSend error: ", GetLastError());
+    if (ticket < 0) {
+        Print("OrderSend error: ", GetLastError());
+        return false;
+    }
+    return true;
+}
+
+void ClearSignalFile() {
+    int fh = FileOpen("signal_" + Symbol() + ".txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh == INVALID_HANDLE) return;
+    FileWriteString(fh, "NONE,0.01,0,0");
+    FileClose(fh);
 }
 
 void CloseAll(int type) {

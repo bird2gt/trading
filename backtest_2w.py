@@ -1,15 +1,16 @@
 """
 Two-week walk-forward simulation.
-Forex:   ZScoreAdx(adx≥25, z≥2.0) — +DI/-DI direction + Z-Score signal line
-Metals:  ZScoreAdx(adx≥20, z≥1.5) — same logic, wider threshold
-Crypto:  BreakoutADX(adx≥25, rising≥5) — matches live run_mt4.py
+Forex:   Forex profile strategy — ZScoreAdx(adx≥25, z≥2.0)
+Metals:  Metals profile strategy — MeanReversion + max ADX filter
+Crypto:  Crypto profile strategy — BreakoutADX(adx≥25, rising≥5)
 Signal on closed H4 bars only (df_h4.iloc[:-1]) — no repaint.
 """
 import time
 import pandas as pd
 from history.fetcher import fetch_ohlcv
-from strategy.forex.z_score_adx import ZScoreAdx
-from strategy.crypto.breakout import Breakout as BreakoutCrypto
+from strategy.crypto import Crypto
+from strategy.forex import Forex
+from strategy.metals import Metals
 from strategy.sma_cross import SMACross  # exit MA only, not used for signals
 
 SYMBOLS = [
@@ -25,15 +26,15 @@ FOREX_SYMBOLS = {
 }
 CRYPTO_SYMBOLS = {"BTC/USD", "ETH/USD"}
 
-STRATEGY_FOREX = ZScoreAdx(
+STRATEGY_FOREX = Forex(
     z_period=20, z_entry=2.0,
     adx_period=14, adx_threshold=25.0,
 )
-STRATEGY_METALS = ZScoreAdx(
-    z_period=20, z_entry=1.5,
-    adx_period=14, adx_threshold=20.0,
+STRATEGY_METALS = Metals(
+    period=20, std_mult=2.0,
+    adx_period=14, max_adx=25.0,
 )
-STRATEGY_CRYPTO = BreakoutCrypto(
+STRATEGY_CRYPTO = Crypto(
     period=20, adx_period=14, adx_threshold=25.0,
     vol_ma=20, vol_mult=1.2, adx_rising_bars=5,
 )
@@ -157,8 +158,7 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
 
 def main():
     print("2-week walk-forward simulation\n"
-          "Forex: ZScoreAdx(adx≥25, z≥2.0)  "
-          "Metals/Crypto: ZScoreAdx(adx≥20, z≥1.5)\n"
+          "Forex: Forex profile  Metals: Metals profile  Crypto: Crypto profile\n"
           f"$10k balance · 2% risk/trade · "
           f"{TWO_WEEKS_H4} H4 bars + {WARMUP_H4} warmup\n")
 
@@ -174,7 +174,7 @@ def main():
             elif sym in CRYPTO_SYMBOLS:
                 tag = "BreakoutADX(25/r5)"
             else:
-                tag = "ZScoreAdx(20/1.5)"
+                tag = "MetalsMR(maxADX25)"
             print(f"ok  [{tag}]  window from {wstart}")
         except Exception as e:
             print(f"FAIL — {e}")
@@ -204,7 +204,7 @@ def main():
         elif sym in CRYPTO_SYMBOLS:
             tag = "BreakoutADX(25/r5)"
         else:
-            tag = "ZScoreAdx(20/1.5)"
+            tag = "MetalsMR(maxADX25)"
         if sub.empty:
             print(f"{sym:<10} {tag:<20} {'–':>3}")
             continue
@@ -235,7 +235,7 @@ def main():
               f"{cw/len(crypto_df)*100:.0f}% win  {crypto_df['pnl'].sum():>+8.2f}$")
     if len(metals_df):
         mw = (metals_df["pnl"] > 0).sum()
-        print(f"Metals ZScoreAdx(20/1.5):  {len(metals_df):>2} trades  "
+        print(f"Metals MetalsMR(maxADX25): {len(metals_df):>2} trades  "
               f"{mw/len(metals_df)*100:.0f}% win  {metals_df['pnl'].sum():>+8.2f}$")
 
     # ── trade log ────────────────────────────────────────────────────────────

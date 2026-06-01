@@ -84,6 +84,9 @@ def get_account():
 @app.get("/positions")
 def get_positions():
     path = MT4_FILES_DIR / "positions.txt"
+    if not path.exists():
+        raise HTTPException(status_code=503, detail="positions.txt missing")
+
     result = []
     try:
         for line in path.read_text().strip().splitlines():
@@ -92,8 +95,8 @@ def get_positions():
             parts = line.split(",")
             if len(parts) >= 3:
                 result.append({"symbol": parts[0], "action": parts[1], "open_price": float(parts[2])})
-    except Exception:
-        pass
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"positions read failed: {e}") from e
     return result
 
 
