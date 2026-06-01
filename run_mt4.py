@@ -86,10 +86,14 @@ ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
 ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
 
-STRATEGY = SMACross(fast=5, slow=20)           # metals + crypto, and 1h early-exit MA
+STRATEGY = SMACross(fast=5, slow=20)           # 1h early-exit MA only
 STRATEGY_FOREX = ZScoreAdx(                    # forex: pullback to EMA200 in ADX trend
     z_period=20, z_entry=2.0,
     adx_period=14, ema_period=200, adx_threshold=25.0,
+)
+STRATEGY_OTHER = ZScoreAdx(                    # metals + crypto: same logic, wider threshold
+    z_period=20, z_entry=1.5,
+    adx_period=14, ema_period=200, adx_threshold=20.0,
 )
 BREAKOUT_STRATEGY = Breakout(period=8)         # 8 × 15min = 2h pre-news range
 
@@ -381,7 +385,7 @@ def trading_loop():
                     if symbol in FOREX_SYMBOLS:
                         signal = STRATEGY_FOREX.generate_signal(df_closed)
                     else:
-                        signal = STRATEGY.generate_signal(df_closed, df_trend=df_d1)
+                        signal = STRATEGY_OTHER.generate_signal(df_closed)
                     sl_mult = _profile(symbol)["sl_mult"]
                     tp_mult = ATR_TP1_MULT
                     tp_price = None

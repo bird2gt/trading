@@ -1,18 +1,14 @@
 """
 Two-week walk-forward simulation.
-Forex: ZScoreAdx (pullback to EMA200 in ADX trend)
-Metals + Crypto: SMACross 5/20
-Matches live bot: signal on closed H4 bars (df_h4.iloc[:-1])
+Forex:          ZScoreAdx(adx≥25, z≥2.0) — pullback to EMA200 in strong trend
+Metals/Crypto:  ZScoreAdx(adx≥20, z≥1.5) — same logic, wider threshold
+Signal on closed H4 bars only (df_h4.iloc[:-1]) — no repaint.
 """
 import time
 import pandas as pd
 from history.fetcher import fetch_ohlcv
-from strategy.sma_cross import SMACross
 from strategy.forex.z_score_adx import ZScoreAdx
-from strategy.structure import market_structure, fib_tp
-
-ATR_PERIOD   = 14
-ATR_TP1_MULT = 1.5
+from strategy.sma_cross import SMACross  # exit MA only, not used for signals
 
 SYMBOLS = [
     "EUR/USD", "GBP/USD", "USD/CHF", "USD/JPY",
@@ -30,14 +26,17 @@ STRATEGY_FOREX = ZScoreAdx(
     z_period=20, z_entry=2.0,
     adx_period=14, ema_period=200, adx_threshold=25.0,
 )
-STRATEGY_OTHER = SMACross(fast=5, slow=20)
+STRATEGY_OTHER = ZScoreAdx(
+    z_period=20, z_entry=1.5,
+    adx_period=14, ema_period=200, adx_threshold=20.0,
+)
 
+ATR_PERIOD   = 14
 TWO_WEEKS_H4 = 84
 WARMUP_H4    = 250
 TOTAL_H4     = TWO_WEEKS_H4 + WARMUP_H4
-
 INITIAL_BALANCE = 10_000.0
-RISK_PCT = 0.02
+RISK_PCT        = 0.02
 
 PIP_CONFIG = {
     "EUR/USD": {"pip_size": 0.0001, "pip_value": 10.0},
@@ -52,15 +51,13 @@ PIP_CONFIG = {
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
     "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
 }
-
 SL_MULT = {
     "EUR/USD": 1.5, "USD/CHF": 1.5, "EUR/CHF": 1.5,
-    "AUD/USD": 1.5, "USD/CAD": 1.5,
-    "GBP/USD": 2.0,
-    "USD/JPY": 1.5,
-    "XAU/USD": 1.0, "XAG/USD": 1.0,
+    "AUD/USD": 1.5, "USD/CAD": 1.5, "GBP/USD": 2.0,
+    "USD/JPY": 1.5, "XAU/USD": 1.0, "XAG/USD": 1.0,
     "BTC/USD": 1.0, "ETH/USD": 1.0,
 }
+TP_MULT = 1.5  # 1:1 R:R for mean-reversion; chandelier takes over in live
 
 
 def _atr_series(df: pd.DataFrame) -> pd.Series:
@@ -74,8 +71,7 @@ def _lot_size(entry: float, sl: float, symbol: str, balance: float) -> float:
     sl_pips = abs(entry - sl) / cfg["pip_size"]
     if sl_pips == 0:
         return 0.01
-    lots = balance * RISK_PCT / (sl_pips * cfg["pip_value"])
-    return max(0.01, min(2.0, round(lots, 2)))
+    return max(0.01, min(2.0, round(balance * RISK_PCT / (sl_pips * cfg["pip_value"]), 2)))
 
 
 def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -> float:
@@ -84,10 +80,10 @@ def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -
     return round(pips * cfg["pip_value"] * lots, 2)
 
 
-def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> list[dict]:
-    atr      = _atr_series(df_h4)
-    sl_mult  = SL_MULT.get(symbol, 1.5)
+def backtest_symbol(symbol: str, df_h4: pd.DataFrame) -> list[dict]:
     strategy = STRATEGY_FOREX if symbol in FOREX_SYMBOLS else STRATEGY_OTHER
+    sl_mult  = SL_MULT.get(symbol, 1.5)
+    atr      = _atr_series(df_h4)
     trades   = []
     in_trade = False
     balance  = INITIAL_BALANCE
@@ -96,7 +92,6 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> li
     for i in range(start_i, len(df_h4)):
         bar_time = df_h4.index[i]
 
-        # ── exit check ───────────────────────────────────────────────────────
         if in_trade:
             h = df_h4["high"].iloc[i]
             l = df_h4["low"].iloc[i]
@@ -104,7 +99,7 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> li
             hit_tp = (direction ==  1 and h >= tp) or (direction == -1 and l <= tp)
             if hit_tp or hit_sl:
                 exit_p = tp if hit_tp else sl
-                pnl = _pnl(entry_price, exit_p, direction, lots, symbol)
+                pnl    = _pnl(entry_price, exit_p, direction, lots, symbol)
                 balance += pnl
                 trades.append({
                     "symbol":  symbol,
@@ -123,31 +118,12 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> li
                 in_trade = False
             continue
 
-        # ── signal on closed bars only (iloc[:i]) ────────────────────────────
         if i == 0:
             continue
-        df_closed = df_h4.iloc[:i]
-        bar_date  = df_h4.index[i - 1].date()
-        df_d1_sl  = df_d1[df_d1.index.date <= bar_date]
-
-        if symbol in FOREX_SYMBOLS:
-            signal = strategy.generate_signal(df_closed)
-        else:
-            signal = strategy.generate_signal(
-                df_closed,
-                df_trend=df_d1_sl if len(df_d1_sl) >= 55 else None,
-            )
-
+        df_closed = df_h4.iloc[:i]  # closed bars only — no repaint
+        signal    = strategy.generate_signal(df_closed)
         if signal == 0:
             continue
-
-        # market structure filter (forex only — ZScoreAdx already has EMA200 filter)
-        if symbol not in FOREX_SYMBOLS:
-            struct = market_structure(df_closed)
-            if signal == 1 and struct == -1:
-                continue
-            if signal == -1 and struct == 1:
-                continue
 
         entry_price = df_h4["close"].iloc[i - 1]
         atr_val     = atr.iloc[i - 1]
@@ -156,17 +132,8 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> li
 
         sl = (entry_price - sl_mult * atr_val if signal == 1
               else entry_price + sl_mult * atr_val)
-
-        # TP: Fib 1.272 for non-forex, ATR 1:1 for forex (mean-reversion, closer target)
-        if symbol in FOREX_SYMBOLS:
-            tp = (entry_price + ATR_TP1_MULT * atr_val if signal == 1
-                  else entry_price - ATR_TP1_MULT * atr_val)
-        else:
-            tp_fib = fib_tp(df_closed, signal, level=1.272)
-            tp = tp_fib if tp_fib else (
-                entry_price + ATR_TP1_MULT * atr_val if signal == 1
-                else entry_price - ATR_TP1_MULT * atr_val
-            )
+        tp = (entry_price + TP_MULT * atr_val if signal == 1
+              else entry_price - TP_MULT * atr_val)
 
         lots      = _lot_size(entry_price, sl, symbol, balance)
         direction = signal
@@ -177,60 +144,72 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_d1: pd.DataFrame) -> li
 
 
 def main():
-    print(f"2-week simulation  Forex=ZScoreAdx  Metals/Crypto=SMACross\n"
-          f"({TWO_WEEKS_H4} H4 bars + {WARMUP_H4} warmup,  $10k balance,  2% risk/trade)\n")
+    print("2-week walk-forward simulation\n"
+          "Forex: ZScoreAdx(adx≥25, z≥2.0)  "
+          "Metals/Crypto: ZScoreAdx(adx≥20, z≥1.5)\n"
+          f"$10k balance · 2% risk/trade · "
+          f"{TWO_WEEKS_H4} H4 bars + {WARMUP_H4} warmup\n")
 
     data = {}
     for sym in SYMBOLS:
         print(f"  {sym}...", end=" ", flush=True)
         try:
             df_h4 = fetch_ohlcv(sym, outputsize=TOTAL_H4 + 1, interval="4h")
-            df_d1 = fetch_ohlcv(sym, outputsize=TOTAL_H4 // 4, interval="1day")
-            data[sym] = (df_h4, df_d1)
-            window_start = df_h4.index[-TWO_WEEKS_H4].date()
-            strat = "ZScoreAdx" if sym in FOREX_SYMBOLS else "SMACross "
-            print(f"ok  [{strat}]  {len(df_h4)} bars, window from {window_start}")
+            data[sym] = df_h4
+            wstart = df_h4.index[-TWO_WEEKS_H4].date()
+            tag = "ZScoreAdx(25/2.0)" if sym in FOREX_SYMBOLS else "ZScoreAdx(20/1.5)"
+            print(f"ok  [{tag}]  window from {wstart}")
         except Exception as e:
             print(f"FAIL — {e}")
         time.sleep(1)
 
-    print()
     all_trades = []
-    for sym, (df_h4, df_d1) in data.items():
+    for sym, df_h4 in data.items():
         if len(df_h4) < WARMUP_H4 + 10:
             print(f"{sym}: not enough data, skipping")
             continue
-        trades = backtest_symbol(sym, df_h4, df_d1)
-        all_trades.extend(trades)
+        all_trades.extend(backtest_symbol(sym, df_h4))
 
     if not all_trades:
-        print("No trades in the 2-week window.")
+        print("\nNo trades.")
         return
 
     df = pd.DataFrame(all_trades)
+    forex_df = df[df["symbol"].isin(FOREX_SYMBOLS)]
+    other_df = df[~df["symbol"].isin(FOREX_SYMBOLS)]
 
-    # ── per-symbol summary ───────────────────────────────────────────────────
-    print(f"{'Symbol':<10} {'Strat':<11} {'Tr':>3} {'W':>3} {'L':>3} {'Win%':>6} {'PnL $':>9}")
-    print("─" * 52)
+    # ── per-symbol table ─────────────────────────────────────────────────────
+    print(f"\n{'Symbol':<10} {'Strategy':<20} {'Tr':>3} {'W':>3} {'L':>3} {'Win%':>6} {'PnL $':>9}")
+    print("─" * 58)
     for sym in SYMBOLS:
-        sub = df[df["symbol"] == sym]
-        strat = "ZScoreAdx" if sym in FOREX_SYMBOLS else "SMACross"
+        sub  = df[df["symbol"] == sym]
+        tag  = "ZScoreAdx(25/2.0)" if sym in FOREX_SYMBOLS else "ZScoreAdx(20/1.5)"
         if sub.empty:
-            print(f"{sym:<10} {strat:<11} {'–':>3}")
+            print(f"{sym:<10} {tag:<20} {'–':>3}")
             continue
         w = (sub["pnl"] > 0).sum()
         l = len(sub) - w
-        print(f"{sym:<10} {strat:<11} {len(sub):>3} {w:>3} {l:>3} "
+        print(f"{sym:<10} {tag:<20} {len(sub):>3} {w:>3} {l:>3} "
               f"{w/len(sub)*100:>5.0f}% {sub['pnl'].sum():>+9.2f}")
 
     total = len(df)
     wins  = (df["pnl"] > 0).sum()
     pnl   = df["pnl"].sum()
-    print("─" * 52)
-    print(f"{'TOTAL':<10} {'':<11} {total:>3} {wins:>3} {total-wins:>3} "
+    print("─" * 58)
+    print(f"{'TOTAL':<10} {'':<20} {total:>3} {wins:>3} {total-wins:>3} "
           f"{wins/total*100:>5.0f}% {pnl:>+9.2f}")
     print(f"\nReturn on $10k: {pnl/INITIAL_BALANCE*100:+.1f}%   "
-          f"Avg trade: {pnl/total:+.2f}$")
+          f"Avg trade: {pnl/total:+.2f}$   Max loss: {df['pnl'].min():+.2f}$")
+
+    # ── by group ─────────────────────────────────────────────────────────────
+    if len(forex_df):
+        fw = (forex_df["pnl"] > 0).sum()
+        print(f"\nForex  ZScoreAdx(25/2.0): {len(forex_df):>2} trades  "
+              f"{fw/len(forex_df)*100:.0f}% win  {forex_df['pnl'].sum():>+8.2f}$")
+    if len(other_df):
+        ow = (other_df["pnl"] > 0).sum()
+        print(f"Other  ZScoreAdx(20/1.5): {len(other_df):>2} trades  "
+              f"{ow/len(other_df)*100:.0f}% win  {other_df['pnl'].sum():>+8.2f}$")
 
     # ── trade log ────────────────────────────────────────────────────────────
     print(f"\n{'#':<3} {'Symbol':<10} {'Dir':<5} {'Date':<12} "
@@ -241,17 +220,14 @@ def main():
               f"{t['entry']:>9.4f} {t['exit']:>9.4f} {t['lots']:>5.2f} "
               f"{t['pnl']:>+9.2f}  {t['result']}")
 
-    # ── equity by strategy type ──────────────────────────────────────────────
-    forex_df = df[df["symbol"].isin(FOREX_SYMBOLS)]
-    other_df = df[~df["symbol"].isin(FOREX_SYMBOLS)]
-    if len(forex_df):
-        fw = (forex_df["pnl"] > 0).sum()
-        print(f"\nForex  (ZScoreAdx): {len(forex_df)} trades, "
-              f"win {fw/len(forex_df)*100:.0f}%, PnL {forex_df['pnl'].sum():+.2f}$")
-    if len(other_df):
-        ow = (other_df["pnl"] > 0).sum()
-        print(f"Other  (SMACross ): {len(other_df)} trades, "
-              f"win {ow/len(other_df)*100:.0f}%, PnL {other_df['pnl'].sum():+.2f}$")
+    # ── equity curve ─────────────────────────────────────────────────────────
+    print(f"\nEquity ($10k base):")
+    cum = 0.0
+    for t in all_trades:
+        cum += t["pnl"]
+        bar  = ("▲" if t["pnl"] > 0 else "▼") + "█" * min(int(abs(t["pnl"]) / 50), 20)
+        print(f"  {t['symbol']:<10} {t['dir']:<5} {str(t['entry_t'].date()):<12} "
+              f"{cum:>+9.0f}$  {bar}")
 
 
 if __name__ == "__main__":
