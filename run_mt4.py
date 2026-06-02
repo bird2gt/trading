@@ -334,6 +334,10 @@ def trading_loop():
 
         weekend = _weekend_flat_now()
         if weekend:
+            to_flat = [s for s, a in _active_signals.items()
+                       if a in ("BUY", "SELL") and s not in set(ALWAYS_SYMBOLS)]
+            if to_flat:
+                logger.info(f"weekend-flat active — closing {to_flat}")
             _close_all_positions("weekend flat — forex/metals closed", exclude=set(ALWAYS_SYMBOLS))
 
         drawdown_hit = _daily_drawdown_hit()
