@@ -1,6 +1,7 @@
 import os
 import time
 from io import StringIO
+from pathlib import Path
 import requests
 import pandas as pd
 import yfinance as yf
@@ -150,16 +151,26 @@ _SOURCE_WARN_TTL = 600  # warn at most once per 10 min per (source, symbol, inte
 
 
 _SOURCE_PRIORITY = {
-    "crypto": ("_fetch_binance", "_fetch_tiingo", "_fetch_twelve", "_fetch_yahoo", "_fetch_polygon", "_fetch_stooq"),
-    "metal":  ("_fetch_twelve", "_fetch_alpha", "_fetch_finage", "_fetch_polygon", "_fetch_stooq"),
-    "forex":  ("_fetch_twelve", "_fetch_alpha", "_fetch_stooq", "_fetch_yahoo", "_fetch_polygon", "_fetch_tiingo"),
-    "other":  ("_fetch_yahoo", "_fetch_twelve", "_fetch_polygon", "_fetch_stooq"),
+    "crypto": ("_fetch_recorded", "_fetch_binance", "_fetch_tiingo", "_fetch_twelve", "_fetch_yahoo", "_fetch_polygon", "_fetch_stooq"),
+    "metal":  ("_fetch_recorded", "_fetch_twelve", "_fetch_alpha", "_fetch_finage", "_fetch_polygon", "_fetch_stooq"),
+    "forex":  ("_fetch_recorded", "_fetch_twelve", "_fetch_alpha", "_fetch_stooq", "_fetch_yahoo", "_fetch_polygon", "_fetch_tiingo"),
+    "other":  ("_fetch_recorded", "_fetch_yahoo", "_fetch_twelve", "_fetch_polygon", "_fetch_stooq"),
 }
+
+_DEFAULT_OHLCV_RECORD_DIR = Path(__file__).resolve().parent.parent / "data" / "ohlcv"
+_OHLCV_RECORD_DIR = Path(os.environ.get("OHLCV_RECORD_DIR", str(_DEFAULT_OHLCV_RECORD_DIR)))
+_OHLCV_SECRET_ENV = (
+    "TWELVE_DATA_API_KEY",
+    "ALPHA_VANTAGE_API_KEY",
+    "FINAGE_API_KEY",
+    "POLYGON_API_KEY",
+    "TIINGO_API_KEY",
+)
 
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
-    for source in (_fetch_yahoo, _fetch_binance, _fetch_twelve, _fetch_tiingo,
+    for source in (_fetch_recorded, _fetch_yahoo, _fetch_binance, _fetch_twelve, _fetch_tiingo,
                    _fetch_alpha, _fetch_finage, _fetch_polygon, _fetch_stooq):
         source_name = source.__name__
         if symbol in {"XAU/USD", "XAG/USD"} and source_name == "_fetch_yahoo":
@@ -172,7 +183,7 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
             key = (source_name, symbol, interval)
             now = time.time()
             if now - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
-                print(f"[WARN] {source_name}({symbol}, {interval}): {type(e).__name__}: {e}")
+                print(f"[WARN] {source_name}({symbol}, {interval}): {type(e).__name__}: {_mask_secrets(str(e))}")
                 _source_warn_at[key] = now
             continue
 
@@ -189,7 +200,79 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
         if "volume" in result.columns:
             agg["volume"] = "sum"
         result = result.resample("4h", origin="epoch").agg(agg).dropna()
+    _record_ohlcv(symbol, interval, result)
     return result
+
+
+def _recording_enabled() -> bool:
+    return os.environ.get("OHLCV_RECORDING_ENABLED", "1").lower() not in {"0", "false", "no"}
+
+
+def _recording_start() -> pd.Timestamp:
+    raw = os.environ.get("OHLCV_RECORDING_START", "")
+    if raw:
+        ts = pd.Timestamp(raw)
+        return ts.tz_convert(None) if ts.tzinfo is not None else ts
+    return pd.Timestamp.now("UTC").normalize().tz_convert(None)
+
+
+def _ohlcv_path(symbol: str, interval: str) -> Path:
+    safe_symbol = symbol.replace("/", "_").replace(" ", "_")
+    return _OHLCV_RECORD_DIR / safe_symbol / f"{interval}.csv"
+
+
+def _read_recorded_ohlcv(symbol: str, interval: str) -> pd.DataFrame:
+    path = _ohlcv_path(symbol, interval)
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path, parse_dates=["datetime"])
+    if df.empty or "datetime" not in df.columns:
+        return pd.DataFrame()
+    df = df.set_index("datetime").sort_index()
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    return df[["open", "high", "low", "close", "volume"]].astype(float)
+
+
+def _fetch_recorded(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
+    df = _read_recorded_ohlcv(symbol, interval)
+    if df.empty or len(df) < outputsize:
+        return pd.DataFrame()
+    return df.iloc[-outputsize:]
+
+
+def _record_ohlcv(symbol: str, interval: str, df: pd.DataFrame) -> None:
+    if not _recording_enabled() or df.empty:
+        return
+    try:
+        to_store = df.copy()
+        if "volume" not in to_store.columns:
+            to_store["volume"] = 0.0
+        to_store = to_store[["open", "high", "low", "close", "volume"]]
+        to_store = to_store[to_store.index >= _recording_start()].dropna(subset=["open", "high", "low", "close"])
+        if to_store.empty:
+            return
+
+        path = _ohlcv_path(symbol, interval)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _read_recorded_ohlcv(symbol, interval)
+        combined = pd.concat([existing, to_store])
+        combined = combined[~combined.index.duplicated(keep="last")].sort_index()
+        combined.to_csv(path, index_label="datetime")
+    except Exception as e:
+        key = ("record_ohlcv", symbol, interval)
+        now = time.time()
+        if now - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
+            print(f"[WARN] record_ohlcv({symbol}, {interval}): {type(e).__name__}: {e}")
+            _source_warn_at[key] = now
+
+
+def _mask_secrets(text: str) -> str:
+    for name in _OHLCV_SECRET_ENV:
+        secret = os.environ.get(name, "")
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
@@ -313,6 +396,9 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if not api_key:
         return pd.DataFrame()
 
+    if interval == "15min":
+        return pd.DataFrame()
+
     ticker = _FINAGE_MAP.get(symbol)
     if ticker is None:
         return pd.DataFrame()
@@ -322,18 +408,9 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if cached and time.time() - cached[1] < _FINAGE_CACHE_TTL:
         return cached[0]
 
-    now = pd.Timestamp.now('UTC')
-    from_date = (now - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
-    to_date = (now + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Always fetch 1h bars — avoids bar-alignment gaps on session opens
-    resp = requests.get(
-        f"https://api.finage.co.uk/agg/forex/{ticker}/1/hour/{from_date}/{to_date}",
-        params={"apikey": api_key},
-        timeout=15,
-    )
-    data = resp.json()
-    results = data.get("results") or []
+    now = pd.Timestamp.now("UTC")
+    days_back = _finage_days_back(interval, outputsize)
+    results = _fetch_finage_results(ticker, api_key, now - pd.Timedelta(days=days_back), now + pd.Timedelta(days=1))
     if not results:
         return pd.DataFrame()
 
@@ -341,6 +418,7 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df.index = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert(None)
     df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
     df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
+    df = df[~df.index.duplicated(keep="last")]
 
     if interval == "4h":
         df = _resample_4h(df)
@@ -352,6 +430,41 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 
     _finage_cache[cache_key] = (df, time.time())
     return df
+
+
+def _finage_days_back(interval: str, outputsize: int) -> int:
+    bars = max(int(outputsize or 1), 1)
+    if interval == "4h":
+        return max(14, int(bars * 4 / 24) + 14)
+    if interval == "1h":
+        return max(7, int(bars / 24) + 7)
+    if interval == "1day":
+        return max(30, bars + 14)
+    return 30
+
+
+def _fetch_finage_results(ticker: str, api_key: str, start: pd.Timestamp, end: pd.Timestamp) -> list[dict]:
+    chunks = []
+    cursor = start
+    while cursor < end:
+        chunk_end = min(cursor + pd.Timedelta(days=30), end)
+        from_date = cursor.strftime("%Y-%m-%d")
+        to_date = chunk_end.strftime("%Y-%m-%d")
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    f"https://api.finage.co.uk/agg/forex/{ticker}/1/hour/{from_date}/{to_date}",
+                    params={"apikey": api_key},
+                    timeout=30,
+                )
+                data = resp.json()
+                chunks.extend(data.get("results") or [])
+                break
+            except requests.RequestException:
+                if attempt == 1:
+                    pass
+        cursor = chunk_end
+    return chunks
 
 
 def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
@@ -378,6 +491,8 @@ def _fetch_stooq(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     if resp.status_code != 200:
+        return pd.DataFrame()
+    if not resp.text.lstrip().lower().startswith("date,"):
         return pd.DataFrame()
 
     df = pd.read_csv(StringIO(resp.text))
@@ -578,7 +693,7 @@ def _select_frame(symbol: str, interval: str, outputsize: int,
     if not prepared:
         raise ValueError(f"No current data for {symbol} from any source")
 
-    limit_h = _STALE_HOURS.get(interval, 8)
+    limit_h = _stale_limit_hours(symbol, interval)
     fresh = [item for item in prepared if item[3] <= limit_h]
     if not fresh:
         rank, source_name, candidate, age_h = min(prepared, key=lambda x: (x[0], x[3]))
@@ -589,6 +704,12 @@ def _select_frame(symbol: str, interval: str, outputsize: int,
 
     _, _, result, _ = min(fresh, key=lambda x: x[0])
     return result.astype(float)
+
+
+def _stale_limit_hours(symbol: str, interval: str) -> int:
+    if symbol == "XAG/USD" and interval == "1h":
+        return 4
+    return _STALE_HOURS.get(interval, 8)
 
 
 def _merge(frames: list[pd.DataFrame]) -> pd.DataFrame:

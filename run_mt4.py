@@ -1,9 +1,11 @@
 import os
 import sys
+import json
 import socket
 import time
 import threading
 import logging
+from pathlib import Path
 from datetime import date, datetime, timezone
 import requests
 import pandas as pd
@@ -87,6 +89,7 @@ _MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_GROUP}
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
 _entry_prices: dict[str, float] = {}   # symbol → entry price
 _day_start: dict = {"date": None, "balance": None}
+_DAY_START_FILE = Path(__file__).resolve().parent / "logs" / "day_start.json"
 _last_digest_date: date | None = None
 _last_calendar_date: date | None = None
 _last_journal_sync: float = 0.0
@@ -112,6 +115,34 @@ def _utc_today() -> date:
     return datetime.now(timezone.utc).date()
 
 
+def _load_day_start(today: date) -> bool:
+    if _day_start["date"] == today and _day_start["balance"] is not None:
+        return True
+    try:
+        data = json.loads(_DAY_START_FILE.read_text(encoding="utf-8"))
+        saved_date = date.fromisoformat(data.get("date", ""))
+        saved_balance = float(data["balance"])
+    except Exception:
+        return False
+    if saved_date != today:
+        return False
+    _day_start["date"] = saved_date
+    _day_start["balance"] = saved_balance
+    print(f"Loaded day start balance: {saved_balance:.2f} ({saved_date.isoformat()} UTC)")
+    return True
+
+
+def _save_day_start(today: date, balance: float) -> None:
+    try:
+        _DAY_START_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _DAY_START_FILE.write_text(
+            json.dumps({"date": today.isoformat(), "balance": balance}, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[WARN] could not persist day start balance: {e}")
+
+
 def _daily_drawdown_hit() -> bool:
     today = _utc_today()
     try:
@@ -119,9 +150,10 @@ def _daily_drawdown_hit() -> bool:
     except RuntimeError as e:
         print(f"[WARN] drawdown check skipped: {e}")
         return False
-    if _day_start["date"] != today:
+    if not _load_day_start(today):
         _day_start["date"] = today
         _day_start["balance"] = balance
+        _save_day_start(today, balance)
         print(f"New day — starting balance: {balance:.2f}")
         return False
     start = _day_start["balance"]
@@ -360,6 +392,14 @@ def trading_loop():
                         df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
                     except Exception as e:
                         print(f"{symbol}: early-exit check skipped — 1h data unavailable: {e}")
+                        if asset_profile == "metal":
+                            try:
+                                df_4h_exit = fetch_ohlcv(symbol, outputsize=50, interval="4h")
+                            except Exception as fallback_error:
+                                print(f"{symbol}: early-exit fallback skipped — 4h data unavailable: {fallback_error}")
+                            else:
+                                if _check_early_exit(symbol, df_4h_exit):
+                                    continue
                     else:
                         if _check_early_exit(symbol, df_1h):
                             continue
@@ -550,7 +590,7 @@ def _port_in_use(host: str = "127.0.0.1", port: int = 8000) -> bool:
         return s.connect_ex((host, port)) == 0
 
 
-if __name__ == "__main__":
+def main():
     if _port_in_use():
         print("ERROR: port 8000 already in use — another run_mt4.py is running. Aborting.")
         sys.exit(1)
@@ -564,3 +604,7 @@ if __name__ == "__main__":
     journal_sync()
     journal_stats()
     trading_loop()
+
+
+if __name__ == "__main__":
+    main()
