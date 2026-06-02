@@ -1,0 +1,16 @@
+[
+  {
+    "trigger": "PreToolUse",
+    "actions": [
+      {
+        "type": "command",
+        "command": "python -m scripts.validate_data_format",
+        "description": "Validate data format compatibility with forex strategies",
+        "timeout": 30,
+        "environment": {
+          "VALIDATE_OHLC": "true"
+        }
+      }
+    ]
+  }
+]
