@@ -4,6 +4,7 @@
 input double LotSize             = 0.01;
 input int    PollSeconds         = 5;
 input int    Slippage            = 3;
+// SL, TP and lot size are computed by the Python side and read from the signal file.
 // Breakeven (for calm pairs: EUR/USD, USD/CHF)
 input bool   UseBreakeven        = true;
 input double BreakevenATRMult    = 1.0;   // move SL to entry after X ATR profit
@@ -32,6 +33,7 @@ void OnTimer() {
     ReadSignal();
     WriteBalance();
     WritePositions();
+    WriteTrades();
 }
 
 void OnTick() {}
@@ -57,11 +59,6 @@ void ReadSignal() {
     double tp1    = (n > 3) ? StringToDouble(parts[3]) : 0.0;
     if (lots <= 0) lots = LotSize;
 
-    if (action == "NONE") {
-        lastAction = "NONE";
-        return;
-    }
-
     // CLOSE must retry until flat — don't let the lastAction guard suppress it
     // (e.g. an OrderClose rejected near market close would otherwise never retry)
     if (action == "CLOSE") {
@@ -70,28 +67,39 @@ void ReadSignal() {
             _resetChandelier();
             Print("Signal applied: CLOSE");
         }
-        if (CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0) ClearSignalFile();
         lastAction = action;
         return;
     }
 
     if (action == lastAction) return;
 
-    bool applied = false;
-    if (action == "BUY") {
-        CloseAll(OP_SELL);
-        if (CountOrders(OP_BUY) == 0) { _resetChandelier(); applied = OpenOrder(OP_BUY, lots, sl, tp1); }
-        else applied = true;
-    } else if (action == "SELL") {
-        CloseAll(OP_BUY);
-        if (CountOrders(OP_SELL) == 0) { _resetChandelier(); applied = OpenOrder(OP_SELL, lots, sl, tp1); }
-        else applied = true;
+    // Risk is owned by Python: use the file's SL, TP and lot verbatim (single source of
+    // truth, matches the backtest). The EA only clamps lots to the broker's volume limits.
+    bool opened = false;
+    double lot_n = NormalizeLots(lots);
+    double sl_n  = NormalizeDouble(sl, Digits);
+    if (sl_n <= 0) {
+        Print("Signal ignored: no valid SL in file for ", action);
+        return;
     }
 
-    if (applied) {
-        ClearSignalFile();
+    if (action == "BUY") {
+        CloseAll(OP_SELL);
+        if (CountOrders(OP_BUY) == 0) {
+            _resetChandelier();
+            opened = OpenOrder(OP_BUY, lot_n, sl_n, tp1);
+        }
+    } else if (action == "SELL") {
+        CloseAll(OP_BUY);
+        if (CountOrders(OP_SELL) == 0) {
+            _resetChandelier();
+            opened = OpenOrder(OP_SELL, lot_n, sl_n, tp1);
+        }
+    }
+
+    if (opened) {
         lastAction = action;
-        Print("Signal applied: ", action, " lots=", lots, " SL=", sl, " TP1=", tp1);
+        Print("Signal applied: ", action, " lots=", lot_n, " SL=", sl_n, " TP1=", tp1);
     }
 }
 
@@ -224,6 +232,53 @@ void WritePositions() {
 }
 
 
+// ── closed-trade history writer ─────────────────────────────────────────────
+
+void WriteTrades() {
+    int fh = FileOpen("trades_" + Symbol() + ".csv", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh == INVALID_HANDLE) return;
+    FileWriteString(fh,
+        "ticket,symbol,side,lots,open_price,close_price,open_time,close_time,sl,tp,profit,swap,comment\n");
+    for (int i = 0; i < OrdersHistoryTotal(); i++) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+        if (OrderSymbol() != Symbol()) continue;
+        if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+        string side    = (OrderType() == OP_BUY) ? "BUY" : "SELL";
+        string comment = OrderComment();
+        StringReplace(comment, ",", " ");  // keep CSV columns aligned
+        FileWriteString(fh,
+            IntegerToString(OrderTicket())                          + "," +
+            OrderSymbol()                                           + "," +
+            side                                                    + "," +
+            DoubleToString(OrderLots(), 2)                          + "," +
+            DoubleToString(OrderOpenPrice(), 5)                     + "," +
+            DoubleToString(OrderClosePrice(), 5)                    + "," +
+            TimeToString(OrderOpenTime(),  TIME_DATE | TIME_MINUTES) + "," +
+            TimeToString(OrderCloseTime(), TIME_DATE | TIME_MINUTES) + "," +
+            DoubleToString(OrderStopLoss(), 5)                      + "," +
+            DoubleToString(OrderTakeProfit(), 5)                    + "," +
+            DoubleToString(OrderProfit(), 2)                        + "," +
+            DoubleToString(OrderSwap(), 2)                          + "," +
+            comment                                                 + "\n");
+    }
+    FileClose(fh);
+}
+
+
+// ── lot clamping to broker volume limits ───────────────────────────────────
+
+double NormalizeLots(double lots) {
+    if (lots <= 0) lots = LotSize;
+    double lotStep = MarketInfo(Symbol(), MODE_LOTSTEP);
+    double minLot  = MarketInfo(Symbol(), MODE_MINLOT);
+    double maxLot  = MarketInfo(Symbol(), MODE_MAXLOT);
+    if (lotStep > 0) lots = MathRound(lots / lotStep) * lotStep;
+    if (lots < minLot) lots = minLot;
+    if (lots > maxLot) lots = maxLot;
+    return lots;
+}
+
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 bool OpenOrder(int type, double lots, double sl, double tp) {
@@ -236,13 +291,6 @@ bool OpenOrder(int type, double lots, double sl, double tp) {
         return false;
     }
     return true;
-}
-
-void ClearSignalFile() {
-    int fh = FileOpen("signal_" + Symbol() + ".txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
-    if (fh == INVALID_HANDLE) return;
-    FileWriteString(fh, "NONE,0.01,0,0");
-    FileClose(fh);
 }
 
 void CloseAll(int type) {
