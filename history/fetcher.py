@@ -149,19 +149,30 @@ _source_warn_at: dict[tuple, float] = {}
 _SOURCE_WARN_TTL = 600  # warn at most once per 10 min per (source, symbol, interval)
 
 
+_SOURCE_PRIORITY = {
+    "crypto": ("_fetch_binance", "_fetch_tiingo", "_fetch_twelve", "_fetch_yahoo", "_fetch_polygon", "_fetch_stooq"),
+    "metal":  ("_fetch_twelve", "_fetch_alpha", "_fetch_finage", "_fetch_polygon", "_fetch_stooq"),
+    "forex":  ("_fetch_twelve", "_fetch_alpha", "_fetch_stooq", "_fetch_yahoo", "_fetch_polygon", "_fetch_tiingo"),
+    "other":  ("_fetch_yahoo", "_fetch_twelve", "_fetch_polygon", "_fetch_stooq"),
+}
+
+
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
     frames = []
     for source in (_fetch_yahoo, _fetch_binance, _fetch_twelve, _fetch_tiingo,
                    _fetch_alpha, _fetch_finage, _fetch_polygon, _fetch_stooq):
+        source_name = source.__name__
+        if symbol in {"XAU/USD", "XAG/USD"} and source_name == "_fetch_yahoo":
+            continue
         try:
             df = source(symbol, interval, outputsize)
             if not df.empty:
-                frames.append(df)
+                frames.append((source_name, df))
         except Exception as e:
-            key = (source.__name__, symbol, interval)
+            key = (source_name, symbol, interval)
             now = time.time()
             if now - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
-                print(f"[WARN] {source.__name__}({symbol}, {interval}): {type(e).__name__}: {e}")
+                print(f"[WARN] {source_name}({symbol}, {interval}): {type(e).__name__}: {e}")
                 _source_warn_at[key] = now
             continue
 
@@ -169,15 +180,15 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
         raise ValueError(f"No data for {symbol} from any source")
 
     now = pd.Timestamp.now('UTC').tz_convert(None)
-    result = _merge(frames).iloc[-outputsize:]
-    result = result[result.index <= now]
-
-    if not result.empty:
-        age_h = (now - result.index[-1]).total_seconds() / 3600
-        limit_h = _STALE_HOURS.get(interval, 8)
-        if age_h > limit_h:
-            raise ValueError(f"{symbol} {interval}: last bar {result.index[-1]} is {age_h:.1f}h old — data too stale")
-
+    result = _select_frame(symbol, interval, outputsize, frames, now)
+    if interval == "4h":
+        # The selected source may phase 4h bars off the even grid (Twelve Data starts at 01:00,
+        # so hours land on {1,5,9,13,17,21}). Snap to the canonical {0,4,8,12,16,20} grid so
+        # MetalsSession's session-hour gate ({8,12,16}) matches; otherwise metals never trigger.
+        agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+        if "volume" in result.columns:
+            agg["volume"] = "sum"
+        result = result.resample("4h", origin="epoch").agg(agg).dropna()
     return result
 
 
@@ -250,7 +261,7 @@ def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if not api_key:
         return pd.DataFrame()
 
-    if interval not in ("1h", "1day"):
+    if interval not in ("1h", "4h", "1day"):
         return pd.DataFrame()
 
     pair = _ALPHA_FX_MAP.get(symbol)
@@ -537,6 +548,47 @@ def _fetch_polygon(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
 
     _polygon_cache[cache_key] = (df, time.time())
     return df
+
+
+def _asset_class(symbol: str) -> str:
+    if symbol in {"BTC/USD", "ETH/USD"}:
+        return "crypto"
+    if symbol in {"XAU/USD", "XAG/USD"}:
+        return "metal"
+    if "/" in symbol:
+        return "forex"
+    return "other"
+
+
+def _select_frame(symbol: str, interval: str, outputsize: int,
+                  frames: list[tuple[str, pd.DataFrame]],
+                  now: pd.Timestamp) -> pd.DataFrame:
+    priority = _SOURCE_PRIORITY.get(_asset_class(symbol), _SOURCE_PRIORITY["other"])
+    order = {name: i for i, name in enumerate(priority)}
+    prepared: list[tuple[int, str, pd.DataFrame, float]] = []
+
+    for source_name, df in frames:
+        candidate = df[df.index <= now].iloc[-outputsize:]
+        if candidate.empty:
+            continue
+        age_h = (now - candidate.index[-1]).total_seconds() / 3600
+        rank = order.get(source_name, len(order))
+        prepared.append((rank, source_name, candidate, age_h))
+
+    if not prepared:
+        raise ValueError(f"No current data for {symbol} from any source")
+
+    limit_h = _STALE_HOURS.get(interval, 8)
+    fresh = [item for item in prepared if item[3] <= limit_h]
+    if not fresh:
+        rank, source_name, candidate, age_h = min(prepared, key=lambda x: (x[0], x[3]))
+        raise ValueError(
+            f"{symbol} {interval}: last bar {candidate.index[-1]} from {source_name} "
+            f"is {age_h:.1f}h old — data too stale"
+        )
+
+    _, _, result, _ = min(fresh, key=lambda x: x[0])
+    return result.astype(float)
 
 
 def _merge(frames: list[pd.DataFrame]) -> pd.DataFrame:

@@ -36,7 +36,7 @@ class MetalsSession(BaseStrategy):
         else:
             raise ValueError(f"MetalsSession: unknown symbol '{symbol}'")
 
-    def generate_signal(self, df: pd.DataFrame, df_xau: pd.DataFrame | None = None) -> int:
+    def generate_signal(self, df: pd.DataFrame, df_xau: pd.DataFrame | None = None, **kwargs) -> int:
         if df.empty:
             return 0
         hour = df.index[-1].hour

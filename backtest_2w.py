@@ -42,31 +42,8 @@ TWO_WEEKS_H4 = 84
 WARMUP_H4    = 250
 TOTAL_H4     = TWO_WEEKS_H4 + WARMUP_H4
 INITIAL_BALANCE = 10_000.0
-RISK_PCT        = 0.02
-
-PIP_CONFIG = {
-    "EUR/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "GBP/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "USD/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
-    "EUR/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
-    "USD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
-    "USD/CAD": {"pip_size": 0.0001, "pip_value": 7.0},
-    "AUD/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
-    "XAG/USD": {"pip_size": 0.001,  "pip_value": 5.0},
-    "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
-    "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
-}
-SL_MULT = {
-    "EUR/USD": 1.5, "USD/CHF": 1.5, "EUR/CHF": 1.5,
-    "AUD/USD": 1.5, "USD/CAD": 1.5, "GBP/USD": 2.0,
-    "USD/JPY": 1.5, "XAU/USD": 1.5, "XAG/USD": 2.0,
-    "BTC/USD": 1.0, "ETH/USD": 1.0,
-}
-TP_MULT = {
-    "XAG/USD": 2.0,
-}
-DEFAULT_TP_MULT = 1.5
+# Trading rules come from config/profiles.py — the single source of truth (shared with live).
+from config.profiles import PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_for
 
 
 def _strategy_tag(symbol: str) -> str:
@@ -87,8 +64,9 @@ def _lot_size(entry: float, sl: float, symbol: str, balance: float) -> float:
     cfg = PIP_CONFIG.get(symbol, {"pip_size": 0.0001, "pip_value": 10.0})
     sl_pips = abs(entry - sl) / cfg["pip_size"]
     if sl_pips == 0:
-        return 0.01
-    return max(0.01, min(2.0, round(balance * RISK_PCT / (sl_pips * cfg["pip_value"]), 2)))
+        return MIN_LOTS
+    risk_pct = rules_for(symbol)["risk_pct"]
+    return max(MIN_LOTS, min(MAX_LOTS, round(balance * risk_pct / (sl_pips * cfg["pip_value"]), 2)))
 
 
 def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -> float:
@@ -106,8 +84,9 @@ def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_xau_h4: pd.DataFrame | 
         strategy = STRATEGY_METALS_XAG
     else:
         strategy = STRATEGY_METALS_XAU
-    sl_mult  = SL_MULT.get(symbol, 1.5)
-    tp_mult  = TP_MULT.get(symbol, DEFAULT_TP_MULT)
+    rules    = rules_for(symbol)
+    sl_mult  = rules["sl_mult"]
+    tp_mult  = rules["tp_mult"]
     atr      = _atr_series(df_h4)
     trades   = []
     in_trade = False

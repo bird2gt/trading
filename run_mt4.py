@@ -9,7 +9,7 @@ import requests
 import pandas as pd
 from history.fetcher import fetch_ohlcv
 from history.news import fetch_headlines
-from history.calendar import is_high_impact_soon, send_calendar_to_telegram
+from history.calendar import is_high_impact_active, is_high_impact_soon, send_calendar_to_telegram
 from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout as NewsBreakout
 from strategy.crypto import Crypto
@@ -33,46 +33,9 @@ _bridge_token = os.environ.get("MT4_BRIDGE_TOKEN", "")
 if _bridge_token:
     _bridge_session.headers["Authorization"] = f"Bearer {_bridge_token}"
 DRAWDOWN_LIMIT = 0.05  # stop trading if daily loss exceeds 5%
-MIN_LOTS = 0.01
-MAX_LOTS = 1.0
-
-PROFILES = {
-    "forex_major": {"risk_pct": 0.02, "sl_mult": 1.5},   # EUR/USD, AUD/USD, USD/CHF, EUR/CHF
-    "forex_gbp":   {"risk_pct": 0.02, "sl_mult": 2.0},   # GBP/USD — шире ATR
-    "forex_jpy":   {"risk_pct": 0.02, "sl_mult": 1.5},   # USD/JPY — динамический pip_value
-    "forex_cad":   {"risk_pct": 0.02, "sl_mult": 1.5},   # USD/CAD — динамический pip_value
-    "crypto":      {"risk_pct": 0.01, "sl_mult": 1.0},
-    "metal":       {"risk_pct": 0.02, "sl_mult": 1.0},
-}
-
-SYMBOL_PROFILES = {
-    "EUR/USD": "forex_major", "USD/CHF": "forex_major",
-    "EUR/CHF": "forex_major", "AUD/USD": "forex_major",
-    "GBP/USD": "forex_gbp",
-    "USD/JPY": "forex_jpy",
-    "USD/CAD": "forex_cad",
-    "BTC/USD": "crypto", "ETH/USD": "crypto",
-    "XAU/USD": "metal",  "XAG/USD": "metal",
-}
-
-
-def _profile(symbol: str) -> dict:
-    return PROFILES[SYMBOL_PROFILES.get(symbol, "forex_major")]
-
-# pip_size = price per 1 pip; pip_value = USD per pip per standard lot
-PIP_CONFIG = {
-    "EUR/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "GBP/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "USD/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
-    "EUR/CHF": {"pip_size": 0.0001, "pip_value": 10.0},
-    "USD/CAD": {"pip_size": 0.0001, "pip_value": 7.0},
-    "AUD/USD": {"pip_size": 0.0001, "pip_value": 10.0},
-    "USD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
-    "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
-    "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
-    "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
-    "XAG/USD": {"pip_size": 0.001,  "pip_value": 5.0},
-}
+# Trading rules (risk %, ATR stop/target multipliers, pip specs) live in
+# config/profiles.py — the single source of truth shared with the backtest.
+from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_for
 
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
@@ -120,7 +83,7 @@ INVERSE_CORR_GROUPS = [
     {"GBP/USD", "USD/CAD"},        # GBP/USD↑ = USD↓ = USD/CAD↓
     {"AUD/USD", "USD/CAD"},        # AUD/USD↑ = USD↓ = USD/CAD↓
 ]
-_MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_PROFILES}
+_MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_GROUP}
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
 _entry_prices: dict[str, float] = {}   # symbol → entry price
 _day_start: dict = {"date": None, "balance": None}
@@ -138,13 +101,19 @@ def _active_symbols() -> list[str]:
         session = ASIAN_SYMBOLS                          # 22:00-08:00: XAU, XAG
     elif (hour > 12 or (hour == 12 and minute >= 30)) and hour < 21:
         session = LONDON_SYMBOLS + US_SYMBOLS            # 12:30-21:00: EUR, GBP, CHF + XAU
+    elif hour >= 21:
+        session = ASIAN_SYMBOLS                          # rollover hour: no new forex entries
     else:
         session = LONDON_SYMBOLS                         # 08:00-12:30: EUR, GBP, CHF
     return list(dict.fromkeys(ALWAYS_SYMBOLS + session))
 
 
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
 def _daily_drawdown_hit() -> bool:
-    today = date.today()
+    today = _utc_today()
     try:
         balance = _get_balance()
     except RuntimeError as e:
@@ -217,7 +186,7 @@ def _calc_lots(entry: float, sl: float, symbol: str) -> float:
     else:
         pip_value = cfg["pip_value"]
     balance = _get_balance()
-    risk_amount = balance * _profile(symbol)["risk_pct"]
+    risk_amount = balance * rules_for(symbol)["risk_pct"]
     lots = risk_amount / (sl_pips * pip_value)
     lots = round(lots, 2)
     return max(MIN_LOTS, min(MAX_LOTS, lots))
@@ -348,7 +317,7 @@ def trading_loop():
     while True:
         logger.info("Starting new poll cycle...")
         _sleep_until_open()
-        today = date.today()
+        today = _utc_today()
         if datetime.now(timezone.utc).hour == 5 and _last_calendar_date != today:
             _last_calendar_date = today
             threading.Thread(target=send_calendar_to_telegram, daemon=True).start()
@@ -368,24 +337,34 @@ def trading_loop():
             _close_all_positions("weekend flat — forex/metals closed", exclude=set(ALWAYS_SYMBOLS))
 
         drawdown_hit = _daily_drawdown_hit()
-        now_utc = datetime.now(timezone.utc)
-        in_news_window = (now_utc.hour == 12 and now_utc.minute >= 30) or (now_utc.hour == 13 and now_utc.minute < 30)
-
         symbols = list(ALWAYS_SYMBOLS) if weekend else _active_symbols()
-        mode = "BREAKOUT/M15" if in_news_window else "PROFILE/H4"
+        news_windows = {
+            symbol: is_high_impact_active(symbol)
+            for symbol in symbols
+        }
+        in_news_cycle = any(active for active, _ in news_windows.values())
+        mode = "BREAKOUT/M15" if in_news_cycle else "PROFILE/H4"
         weekend_tag = " [weekend: crypto only]" if weekend else ""
         print(f"Session symbols: {symbols} [{mode}]{weekend_tag}{' [drawdown: new entries blocked]' if drawdown_hit else ''}")
         for symbol in symbols:
             try:
-                df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
+                asset_profile = SYMBOL_GROUP.get(symbol)
+                in_news_window, news_event = news_windows.get(symbol, (False, ""))
 
-                if _check_early_exit(symbol, df_1h):
-                    continue
+                if _active_signals.get(symbol) in ("BUY", "SELL"):
+                    try:
+                        df_1h = fetch_ohlcv(symbol, outputsize=50, interval="1h")
+                    except Exception as e:
+                        print(f"{symbol}: early-exit check skipped — 1h data unavailable: {e}")
+                    else:
+                        if _check_early_exit(symbol, df_1h):
+                            continue
 
                 if drawdown_hit:
                     continue
 
                 if in_news_window:
+                    print(f"{symbol}: news breakout window — {news_event}")
                     df_signal = fetch_ohlcv(symbol, outputsize=20, interval="15min")
                     signal = BREAKOUT_STRATEGY.generate_signal(df_signal)
                     sl_mult = tp_mult = ATR_BREAKOUT_MULT
@@ -395,7 +374,6 @@ def trading_loop():
                     # Drop the last (forming) bar so signal is based on closed bars only
                     df_closed = df_h4.iloc[:-1]
                     df_signal = df_closed
-                    asset_profile = SYMBOL_PROFILES.get(symbol)
                     if symbol in FOREX_SYMBOLS:
                         signal = STRATEGY_FOREX.generate_signal(df_closed, symbol=symbol)
                     elif asset_profile == "crypto":
@@ -408,13 +386,10 @@ def trading_loop():
                             signal = STRATEGY_METALS_XAU.generate_signal(df_closed)
                     else:
                         signal = 0
-                    sl_mult = _profile(symbol)["sl_mult"]
-                    tp_mult = ATR_TP1_MULT
+                    rules = rules_for(symbol)
+                    sl_mult = rules["sl_mult"]
+                    tp_mult = rules["tp_mult"]
                     tp_price = None
-                    # wider ATR multipliers for metals (validated by backtest)
-                    if asset_profile == "metal":
-                        sl_mult = 2.0 if symbol == "XAG/USD" else 1.5
-                        tp_mult = 2.0 if symbol == "XAG/USD" else ATR_TP1_MULT
 
                 if signal == 0:
                     print(f"{symbol}: no signal")
@@ -444,10 +419,11 @@ def trading_loop():
                             continue
                     print(f"{symbol}: F&G={fg} — {'allowed' if fg is not None else 'unavailable, skipping filter'}")
 
-                blocked, event_title = is_high_impact_soon(symbol)
-                if blocked:
-                    print(f"{symbol}: blocked — high-impact event: {event_title}")
-                    continue
+                if not in_news_window:
+                    blocked, event_title = is_high_impact_soon(symbol)
+                    if blocked:
+                        print(f"{symbol}: blocked — high-impact event: {event_title}")
+                        continue
 
                 action = "BUY" if signal == 1 else "SELL"
                 if _active_signals.get(symbol) == action:
@@ -488,8 +464,8 @@ def trading_loop():
 
             except Exception as e:
                 print(f"{symbol}: error — {e}")
-        interval = POLL_INTERVAL_NEWS if in_news_window else POLL_INTERVAL
-        print(f"Next poll in {interval}s {'[US news window]' if in_news_window else ''}")
+        interval = POLL_INTERVAL_NEWS if in_news_cycle else POLL_INTERVAL
+        print(f"Next poll in {interval}s {'[news breakout window]' if in_news_cycle else ''}")
         time.sleep(interval)
 
 

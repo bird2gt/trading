@@ -68,6 +68,35 @@ def is_high_impact_soon(symbol: str) -> tuple[bool, str]:
     return False, ""
 
 
+def is_high_impact_active(symbol: str, minutes_before: int = 0,
+                          minutes_after: int = 60) -> tuple[bool, str]:
+    """
+    Returns (True, event_title) during the active post-release news window.
+    Intended for breakout logic, so the default starts at event time and
+    lasts one hour after the release.
+    """
+    currencies = _CURRENCIES.get(symbol, set())
+    if not currencies:
+        return False, ""
+
+    now = datetime.now(timezone.utc)
+    for ev in _fetch_events():
+        if ev.get("impact") != "High":
+            continue
+        if ev.get("country") not in currencies:
+            continue
+
+        ev_time = _parse_time(ev.get("date", ""))
+        if ev_time is None:
+            continue
+
+        delta_min = (ev_time - now).total_seconds() / 60
+        if -minutes_after <= delta_min <= minutes_before:
+            return True, ev.get("title", "event")
+
+    return False, ""
+
+
 _FLAG = {
     "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "CHF": "🇨🇭",
     "JPY": "🇯🇵", "NZD": "🇳🇿", "CAD": "🇨🇦", "AUD": "🇦🇺",
