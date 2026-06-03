@@ -97,6 +97,29 @@ def is_high_impact_active(symbol: str, minutes_before: int = 0,
     return False, ""
 
 
+def recent_high_impact_events(symbol: str, within_hours: float) -> list[dict]:
+    """High-impact events for the symbol's currencies released within the last
+    `within_hours`, newest first. Used by the intraday surprise layer to know
+    *when* a release happened (the feed carries no actual values). Each item:
+    {"time": datetime(UTC), "country": str, "title": str}."""
+    currencies = _CURRENCIES.get(symbol, set())
+    if not currencies:
+        return []
+    now = datetime.now(timezone.utc)
+    out = []
+    for ev in _fetch_events():
+        if ev.get("impact") != "High" or ev.get("country") not in currencies:
+            continue
+        ev_time = _parse_time(ev.get("date", ""))
+        if ev_time is None:
+            continue
+        age_h = (now - ev_time).total_seconds() / 3600
+        if 0 <= age_h <= within_hours:
+            out.append({"time": ev_time, "country": ev["country"], "title": ev.get("title", "")})
+    out.sort(key=lambda e: e["time"], reverse=True)
+    return out
+
+
 _FLAG = {
     "USD": "🇺🇸", "EUR": "🇪🇺", "GBP": "🇬🇧", "CHF": "🇨🇭",
     "JPY": "🇯🇵", "NZD": "🇳🇿", "CAD": "🇨🇦", "AUD": "🇦🇺",

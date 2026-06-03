@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from forecasts.reader import MacroBias, get_macro_bias
+from .surprise import surprise_bias
 
 OPPOSED_FLOOR = 0.3   # smallest size multiplier for a PARAMETERS trade against bias
 
@@ -33,8 +34,20 @@ _PASS = BiasDecision(True, 1.0, "")
 
 
 def resolve_bias(symbol: str, action: str, today: date | None = None) -> BiasDecision:
-    """Resolve the active macro bias for `symbol` against a BUY/SELL `action`."""
-    return _decide(get_macro_bias(symbol, today), action)
+    """Resolve the macro bias for `symbol` against a BUY/SELL `action`, combining
+    the daily/manual forecast with the intraday post-release price reaction.
+    Sources compose multiplicatively — bias only ever dampens, never inflates."""
+    file_dec = _decide(get_macro_bias(symbol, today), action)
+    try:
+        surp = surprise_bias(symbol)
+    except Exception:
+        surp = None
+    surp_dec = _decide(surp, action)
+
+    allow = file_dec.allow and surp_dec.allow
+    mult = round(file_dec.size_mult * surp_dec.size_mult, 2)
+    reason = "; ".join(r for r in (file_dec.reason, surp_dec.reason) if r)
+    return BiasDecision(allow, mult, reason)
 
 
 def _decide(mb: MacroBias | None, action: str) -> BiasDecision:
