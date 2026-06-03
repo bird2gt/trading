@@ -8,3 +8,4 @@ data/ohlcv/
 .DS_Store
 *.db
 logs/
+forecasts/*_bias.md

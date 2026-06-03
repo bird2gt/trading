@@ -20,6 +20,7 @@ import feedparser
 import anthropic
 from dotenv import load_dotenv
 from history.calendar import get_today_events
+from config.profiles import SYMBOL_GROUP
 load_dotenv()
 
 # ── Market forecasters (12) ────────────────────────────────────────────────
@@ -256,6 +257,7 @@ def run_digest() -> None:
         sections.insert(0, f"## 📅 Экономический календарь\n\n{calendar_text}")
 
     _save_digest(today, sections)
+    _write_bias_file(today, _extract_bias(sections))
     _send_telegram("✅ Дайджест отправлен. Ответь любым сообщением — подтверди что прочитал.")
 
 
@@ -303,6 +305,67 @@ def _save_digest(today: date, sections: list[str]) -> None:
     # Telegram is sent as plain text — strip markdown header markers for readability
     tg_body = "\n\n".join(sections).replace("## ", "▸ ")
     _send_telegram(f"📊 Дайджест прогнозистов — {today}\n\n{tg_body}")
+
+
+_BIAS_RE = re.compile(r"Bias:[^\n]*?(быч\w*|медвеж\w*|нейтральн\w*)", re.IGNORECASE)
+
+
+def _extract_bias(sections: list[str]) -> dict[str, tuple[int, str]]:
+    """Per symbol from the digest prose → (direction, level):
+    бычий/медвежий → (±1, PARAMETERS) soft; нейтральный → (0, LOCK) — no new
+    trades while the macro view is conflicted/unclear. Unknown symbols skipped."""
+    biases: dict[str, tuple[int, str]] = {}
+    for sec in sections:
+        head = re.match(r"##\s+(\S+)", sec)
+        if not head or head.group(1) not in SYMBOL_GROUP:
+            continue
+        m = _BIAS_RE.search(sec)
+        if not m:
+            continue
+        word = m.group(1).lower()
+        if word.startswith("быч"):
+            biases[head.group(1)] = (1, "PARAMETERS")
+        elif word.startswith("медвеж"):
+            biases[head.group(1)] = (-1, "PARAMETERS")
+        elif word.startswith("нейтрал"):
+            biases[head.group(1)] = (0, "LOCK")
+    return biases
+
+
+_AUTO_STRENGTH = {"PARAMETERS": 0.5, "LOCK": 0.0}
+
+
+def _write_bias_file(today: date, biases: dict[str, tuple[int, str]]) -> None:
+    """Write the auto-bias forecast the bot reads. Directional view → PARAMETERS
+    (soft, shrinks opposed trades); neutral view → LOCK (no new entries). A
+    manual forecast file (no `origin`) overrides this one."""
+    if not biases:
+        print("Digest: no bias extracted, auto-bias file skipped.")
+        return
+    lines = [
+        "---",
+        f"period_start: {today}",
+        f"period_end: {today}",
+        "status: активный",
+        "origin: auto",
+        "instruments:",
+    ]
+    for sym, (direction, level) in biases.items():
+        lines.append(f"  {sym}: {direction} {_AUTO_STRENGTH[level]} {level}")
+    lines += [
+        "---",
+        "",
+        f"# Авто-bias из дайджеста — {today}",
+        "",
+        "Сгенерировано автоматически из текстового дайджеста. Бычий/медвежий →",
+        "PARAMETERS (встречные сделки ×0.5, не блок); нейтральный → LOCK (новых",
+        "входов нет — макро-картина противоречива). Действует 1 день. Ручной",
+        "forecast-файл (без origin) перекрывает этот авто-bias.",
+        "",
+    ]
+    path = Path(__file__).parent.parent / "forecasts" / f"{today}_bias.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"Auto-bias saved → {path} ({biases})")
 
 
 def _send_email(today: date, body: str) -> None:

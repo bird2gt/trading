@@ -22,7 +22,7 @@ from analytics.sentiment import analyze_sentiment
 from analytics.fear_greed import get_value as get_fg_value
 from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
-from forecasts.reader import get_bias
+from bias import resolve_bias
 from broker.mt4_bridge import run_server
 
 # Setup basic logging
@@ -489,13 +489,13 @@ def trading_loop():
                 # mildly against → halve position size
                 size_mult = 0.5 if (signal == 1 and score == -1) or (signal == -1 and score == 1) else 1.0
 
-                forecast = get_bias(symbol)
-                if signal == 1 and forecast == -1:
-                    print(f"{symbol}: BUY blocked by macro forecast")
+                bias = resolve_bias(symbol, action)
+                if not bias.allow:
+                    print(f"{symbol}: {action} blocked — {bias.reason}")
                     continue
-                if signal == -1 and forecast == 1:
-                    print(f"{symbol}: SELL blocked by macro forecast")
-                    continue
+                if bias.size_mult != 1.0:
+                    size_mult *= bias.size_mult
+                    print(f"{symbol}: {bias.reason}")
 
                 if _correlated_conflict(symbol, action):
                     print(f"{symbol}: {action} blocked by correlation")
