@@ -75,6 +75,13 @@ def _pnl(entry: float, exit_: float, direction: int, lots: float, symbol: str) -
     return round(pips * cfg["pip_value"] * lots, 2)
 
 
+def _profit_factor(pnl: pd.Series) -> str:
+    gross_l = pnl[pnl <= 0].abs().sum()
+    if gross_l == 0:
+        return "inf"
+    return f"{pnl[pnl > 0].sum() / gross_l:.2f}"
+
+
 def backtest_symbol(symbol: str, df_h4: pd.DataFrame, df_xau_h4: pd.DataFrame | None = None) -> list[dict]:
     if symbol in FOREX_SYMBOLS:
         strategy = STRATEGY_FOREX
@@ -186,8 +193,8 @@ def main():
     forex_df = df[df["symbol"].isin(FOREX_SYMBOLS)]
 
     # ── per-symbol table ─────────────────────────────────────────────────────
-    print(f"\n{'Symbol':<10} {'Strategy':<20} {'Tr':>3} {'W':>3} {'L':>3} {'Win%':>6} {'PnL $':>9}")
-    print("─" * 58)
+    print(f"\n{'Symbol':<10} {'Strategy':<20} {'Tr':>3} {'W':>3} {'L':>3} {'Win%':>6} {'PnL $':>9} {'Avg $':>8} {'PF':>6}")
+    print("─" * 74)
     for sym in SYMBOLS:
         sub  = df[df["symbol"] == sym]
         tag = _strategy_tag(sym)
@@ -197,14 +204,16 @@ def main():
         w = (sub["pnl"] > 0).sum()
         l = len(sub) - w
         print(f"{sym:<10} {tag:<20} {len(sub):>3} {w:>3} {l:>3} "
-              f"{w/len(sub)*100:>5.0f}% {sub['pnl'].sum():>+9.2f}")
+              f"{w/len(sub)*100:>5.0f}% {sub['pnl'].sum():>+9.2f} {sub['pnl'].mean():>+8.2f} "
+              f"{_profit_factor(sub['pnl']):>6}")
 
     total = len(df)
     wins  = (df["pnl"] > 0).sum()
     pnl   = df["pnl"].sum()
-    print("─" * 58)
+    print("─" * 74)
     print(f"{'TOTAL':<10} {'':<20} {total:>3} {wins:>3} {total-wins:>3} "
-          f"{wins/total*100:>5.0f}% {pnl:>+9.2f}")
+          f"{wins/total*100:>5.0f}% {pnl:>+9.2f} {pnl/total:>+8.2f} "
+          f"{_profit_factor(df['pnl']):>6}")
     print(f"\nReturn on $10k: {pnl/INITIAL_BALANCE*100:+.1f}%   "
           f"Avg trade: {pnl/total:+.2f}$   Max loss: {df['pnl'].min():+.2f}$")
 

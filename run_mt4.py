@@ -54,6 +54,15 @@ ATR_PERIOD = 14
 ATR_SL_MULT  = 1.5
 ATR_TP1_MULT = 1.5     # 50% close at 1:1 risk/reward
 ATR_BREAKOUT_MULT = 1.0  # tighter SL/TP for news breakout
+EURUSD_POTENTIAL_FILTER = {
+    "adr_period": 20,
+    "atr_period": 14,
+    "min_adr_pips": 45.0,
+    "strong_adr_pips": 60.0,
+    "min_session_range_pips": 30.0,
+    "range_spent_ratio": 0.85,
+    "min_rr": 1.5,
+}
 
 STRATEGY = SMACross(fast=5, slow=20)           # 1h early-exit MA only
 STRATEGY_FOREX = Forex(                        # profile strategy: forex
@@ -228,6 +237,126 @@ def _atr(df: pd.DataFrame) -> float:
     h, l, c = df["high"], df["low"], df["close"]
     tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     return tr.rolling(ATR_PERIOD).mean().iloc[-1]
+
+
+def _daily_from_intraday(df: pd.DataFrame) -> pd.DataFrame:
+    tmp = df.copy()
+    tmp["date"] = tmp.index.date
+    return tmp.groupby("date").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        bars=("close", "count"),
+    )
+
+
+def _true_range_pips(daily: pd.DataFrame, pip_size: float) -> pd.Series:
+    prev_close = daily["close"].shift(1)
+    tr = pd.concat([
+        daily["high"] - daily["low"],
+        (daily["high"] - prev_close).abs(),
+        (daily["low"] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr / pip_size
+
+
+def _breakout_in_direction(df: pd.DataFrame, signal: int, lookback: int) -> bool:
+    if df.empty or len(df) < lookback + 2:
+        return False
+    history = df.iloc[-lookback - 1:-1]
+    close = df["close"].iloc[-1]
+    if signal == 1:
+        return close > history["high"].max()
+    if signal == -1:
+        return close < history["low"].min()
+    return False
+
+
+def _eurusd_potential_filter(signal: int, df_entry: pd.DataFrame,
+                             sl_mult: float, tp_mult: float,
+                             tp_price: float | None,
+                             in_news_window: bool) -> tuple[bool, str]:
+    symbol = "EUR/USD"
+    cfg = EURUSD_POTENTIAL_FILTER
+    pip_size = PIP_CONFIG[symbol]["pip_size"]
+
+    try:
+        df_1h = fetch_ohlcv(symbol, outputsize=1200, interval="1h")
+    except Exception as e:
+        return False, f"EUR/USD potential unavailable: H1 fetch failed ({e})"
+
+    daily = _daily_from_intraday(df_1h)
+    today_key = df_1h.index[-1].date()
+    if today_key not in daily.index:
+        return False, "EUR/USD potential unavailable: current day missing from H1 history"
+
+    complete = daily[(daily.index < today_key) & (daily["bars"] >= 8)]
+    if len(complete) + 1 < cfg["adr_period"] + 1:
+        return False, "EUR/USD potential unavailable: not enough H1 daily history"
+
+    if len(complete) < cfg["adr_period"]:
+        return False, "EUR/USD potential unavailable: not enough completed days"
+
+    adr20 = ((complete["high"] - complete["low"]) / pip_size).tail(cfg["adr_period"]).mean()
+    atr14 = _true_range_pips(complete, pip_size).tail(cfg["atr_period"]).mean()
+    expected_pips = max(float(adr20), float(atr14))
+    today = daily.loc[today_key]
+    today_range_pips = float((today["high"] - today["low"]) / pip_size)
+
+    h1_breakout = _breakout_in_direction(df_1h, signal, lookback=20)
+    try:
+        df_15m = fetch_ohlcv(symbol, outputsize=160, interval="15min")
+    except Exception:
+        m15_breakout = False
+    else:
+        m15_breakout = _breakout_in_direction(df_15m, signal, lookback=32)
+
+    expanded = today_range_pips >= cfg["min_session_range_pips"]
+    strong_setup = expanded and (h1_breakout or m15_breakout or in_news_window)
+
+    if adr20 < cfg["min_adr_pips"]:
+        return False, (
+            f"EUR/USD ADR20={adr20:.1f}p < {cfg['min_adr_pips']:.0f}p; low intraday potential"
+        )
+    if adr20 < cfg["strong_adr_pips"] and not strong_setup:
+        return False, (
+            f"EUR/USD ADR20={adr20:.1f}p needs strong setup; "
+            f"day_range={today_range_pips:.1f}p h1_breakout={h1_breakout} m15_breakout={m15_breakout}"
+        )
+    if today_range_pips >= expected_pips * cfg["range_spent_ratio"]:
+        return False, (
+            f"EUR/USD range mostly spent: {today_range_pips:.1f}p/"
+            f"{expected_pips:.1f}p expected"
+        )
+
+    if len(df_entry) < ATR_PERIOD + 2:
+        return False, "EUR/USD potential unavailable: not enough entry-frame bars"
+    entry = df_entry["close"].iloc[-1]
+    atr = _atr(df_entry)
+    if pd.isna(atr) or atr <= 0:
+        return False, "EUR/USD potential unavailable: ATR invalid"
+
+    sl_pips = sl_mult * atr / pip_size
+    if tp_price is not None and ((signal == 1 and tp_price > entry) or (signal == -1 and tp_price < entry)):
+        target_pips = abs(tp_price - entry) / pip_size
+    else:
+        target_pips = tp_mult * atr / pip_size
+
+    remaining_pips = max(expected_pips - today_range_pips, 0.0)
+    usable_pips = min(target_pips, remaining_pips)
+    required_pips = cfg["min_rr"] * sl_pips
+    if usable_pips < required_pips:
+        return False, (
+            f"EUR/USD target potential too small: usable={usable_pips:.1f}p "
+            f"< {cfg['min_rr']:.1f}R={required_pips:.1f}p "
+            f"(sl={sl_pips:.1f}p target={target_pips:.1f}p remaining={remaining_pips:.1f}p)"
+        )
+
+    return True, (
+        f"ADR20={adr20:.1f}p ATR14={atr14:.1f}p day={today_range_pips:.1f}p "
+        f"remaining={remaining_pips:.1f}p h1_breakout={h1_breakout} m15_breakout={m15_breakout}"
+    )
 
 
 def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0,
@@ -473,6 +602,16 @@ def trading_loop():
                 if _active_signals.get(symbol) == action:
                     print(f"{symbol}: {action} уже активен — пропуск")
                     continue
+
+                if symbol == "EUR/USD":
+                    entry_df = df_signal if in_news_window else df_h4
+                    allowed, reason = _eurusd_potential_filter(
+                        signal, entry_df, sl_mult, tp_mult, tp_price, in_news_window
+                    )
+                    if not allowed:
+                        print(f"{symbol}: {action} blocked — {reason}")
+                        continue
+                    print(f"{symbol}: intraday potential OK — {reason}")
 
                 headlines = fetch_headlines(symbol)
                 score     = analyze_sentiment(symbol, headlines)
