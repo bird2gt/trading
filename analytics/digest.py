@@ -10,6 +10,7 @@ Run manually: python -m analytics.digest
 from __future__ import annotations
 import os
 import re
+import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -257,7 +258,9 @@ def run_digest() -> None:
         sections.insert(0, f"## 📅 Экономический календарь\n\n{calendar_text}")
 
     _save_digest(today, sections)
-    _write_bias_file(today, _extract_bias(sections))
+    regex_bias   = _extract_bias(sections)                              # dedicated sections (neutral→LOCK)
+    derived_bias = _derive_universe_bias(client, "\n\n".join(sections)) # rest of the universe (soft)
+    _write_bias_file(today, {**derived_bias, **regex_bias})             # dedicated wins on overlap
     _send_telegram("✅ Дайджест отправлен. Ответь любым сообщением — подтверди что прочитал.")
 
 
@@ -366,6 +369,51 @@ def _write_bias_file(today: date, biases: dict[str, tuple[int, str]]) -> None:
     path = Path(__file__).parent.parent / "forecasts" / f"{today}_bias.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"Auto-bias saved → {path} ({biases})")
+
+
+# Traded symbols with no dedicated forecaster section — their daily lean is
+# cascaded from the day's macro context (lower confidence → soft PARAMETERS only).
+_DERIVED_UNIVERSE = [
+    "USTEC", "US500", "DE40", "JP225", "BRENT", "WTI",
+    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "ETH/USD",
+]
+
+
+def _derive_universe_bias(client, digest_text: str) -> dict[str, tuple[int, str]]:
+    """Cascade the day's macro picture down to symbols without their own
+    forecaster section. Directional → soft PARAMETERS; neutral/unclear → skipped
+    (not LOCK — these leans are lower-confidence than the analyst sections)."""
+    syms = ", ".join(_DERIVED_UNIVERSE)
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            system=(
+                "Ты макро-аналитик. На основе дайджеста определи направление на сегодня "
+                f"для каждого инструмента: {syms}. "
+                'Верни ТОЛЬКО JSON-объект symbol -> "бычий"|"медвежий"|"нейтральный". '
+                "Ставь нейтральный, если из дайджеста направление неочевидно. Без пояснений."
+            ),
+            messages=[{"role": "user", "content": digest_text[:6000]}],
+        )
+        raw = resp.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw.strip())
+    except Exception as e:
+        print(f"Digest: universe bias derivation failed: {e}")
+        return {}
+    out: dict[str, tuple[int, str]] = {}
+    for sym in _DERIVED_UNIVERSE:
+        word = str(data.get(sym, "")).lower()
+        if word.startswith("быч"):
+            out[sym] = (1, "PARAMETERS")
+        elif word.startswith("медвеж"):
+            out[sym] = (-1, "PARAMETERS")
+        # нейтральный / unknown → skip (no entry, no LOCK)
+    return out
 
 
 def _send_email(today: date, body: str) -> None:
