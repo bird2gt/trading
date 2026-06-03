@@ -16,6 +16,7 @@ from strategy.sma_cross import SMACross
 from strategy.breakout import Breakout as NewsBreakout
 from strategy.crypto import Crypto
 from strategy.forex import Forex
+from strategy.forex.breakout_adx import BreakoutAdx
 from strategy.metals import MetalsSession
 from strategy.structure import market_structure, fib_tp
 from analytics.sentiment import analyze_sentiment
@@ -41,10 +42,10 @@ from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_
 
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
-ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD"]   # monitored for early-exit; MetalsSession returns 0 here
-LONDON_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY",
-                  "XAU/USD", "XAG/USD"]
-US_SYMBOLS     = ["XAU/USD", "XAG/USD"]
+ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"]
+LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
+                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"]
+US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500"]
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
 # Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
@@ -73,17 +74,39 @@ STRATEGY_CRYPTO = Crypto(period=20, adx_period=14, adx_threshold=25.0,
                          vol_ma=20, vol_mult=1.2, adx_rising_bars=5)  # matches backtest
 STRATEGY_METALS_XAU = MetalsSession("XAUUSD")
 STRATEGY_METALS_XAG = MetalsSession("XAGUSD")
+STRATEGY_INDEX = BreakoutAdx(period=20, adx_period=14, adx_threshold=22.0, adx_rising_bars=3)
+STRATEGY_ENERGY = BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_rising_bars=3)
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
-    "EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF",
-    "AUD/USD", "USD/JPY", "USD/CAD",
+    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD",
+}
+
+MT4_SYMBOL_MAP = {
+    "BTC/USD": "BTCUSD",
+    "ETH/USD": "ETHUSD",
+    "XAU/USD": "XAUUSD",
+    "XAG/USD": "XAGUSD",
+    "NZD/CHF": "NZDCHF",
+    "AUD/CHF": "AUDCHF",
+    "NZD/JPY": "NZDJPY",
+    "NZD/CAD": "NZDCAD",
+    "BRENT": "BRENT",
+    "WTI": "WTI",
+    "USTEC": "USTEC",
+    "US500": "US500Cash",
+    "DE40": "DE40Cash",
+    "JP225": "JP225Cash",
 }
 
 CORR_GROUPS = [
     {"EUR/USD", "GBP/USD", "AUD/USD"},  # USD quote pairs: block duplicated USD shorts/longs
     {"USD/CHF", "USD/CAD"},             # USD base pairs: block duplicated USD exposure
     {"XAU/USD", "XAG/USD"},        # положительная корреляция: блокировать одинаковые действия
+    {"BRENT", "WTI"},               # нефть: один и тот же драйвер
+    {"USTEC", "US500"},             # US indices: не дублировать один и тот же риск-on/off
+    {"NZD/CHF", "NZD/JPY", "NZD/CAD"},  # NZD exposure
+    {"NZD/CHF", "AUD/CHF"},         # CHF exposure
 ]
 # Обратная корреляция: блокировать ПРОТИВОПОЛОЖНЫЕ действия (BUY одного = SELL другого = двойной шорт USD)
 INVERSE_CORR_GROUPS = [
@@ -94,7 +117,8 @@ INVERSE_CORR_GROUPS = [
     {"GBP/USD", "USD/CAD"},        # GBP/USD↑ = USD↓ = USD/CAD↓
     {"AUD/USD", "USD/CAD"},        # AUD/USD↑ = USD↓ = USD/CAD↓
 ]
-_MT4_TO_PY = {s.replace("/", ""): s for s in SYMBOL_GROUP}
+_MT4_TO_PY = {mt4: py for py, mt4 in MT4_SYMBOL_MAP.items()}
+_MT4_TO_PY.update({s.replace("/", ""): s for s in SYMBOL_GROUP})
 _active_signals: dict[str, str] = {}   # symbol → "BUY" | "SELL"
 _entry_prices: dict[str, float] = {}   # symbol → entry price
 _day_start: dict = {"date": None, "balance": None}
@@ -207,23 +231,39 @@ def _get_balance() -> float:
     return float(bal)
 
 
+def _mt4_symbol(symbol: str) -> str:
+    return MT4_SYMBOL_MAP.get(symbol, symbol.replace("/", ""))
+
+
+def _forex_pip_value_usd(symbol: str, entry: float) -> float:
+    base, quote = symbol.split("/")
+    if quote == "USD":
+        return 10.0
+    if quote == "JPY":
+        return 1000.0 / entry
+    if quote == "CHF":
+        try:
+            usdchf = fetch_ohlcv("USD/CHF", outputsize=1, interval="1h")["close"].iloc[-1]
+        except Exception:
+            raise RuntimeError(f"Could not fetch USD/CHF rate for {symbol} lot calculation")
+        return 10.0 / usdchf
+    if quote == "CAD":
+        try:
+            usdcad = fetch_ohlcv("USD/CAD", outputsize=1, interval="1h")["close"].iloc[-1]
+        except Exception:
+            raise RuntimeError(f"Could not fetch USD/CAD rate for {symbol} lot calculation")
+        return 10.0 / usdcad
+    return PIP_CONFIG.get(symbol, {"pip_value": 10.0})["pip_value"]
+
+
 def _calc_lots(entry: float, sl: float, symbol: str) -> float:
     sl_distance = abs(entry - sl)
     if sl_distance == 0:
         return MIN_LOTS
     cfg = PIP_CONFIG.get(symbol, {"pip_size": 0.0001, "pip_value": 10.0})
     sl_pips = sl_distance / cfg["pip_size"]
-    if symbol == "USD/JPY":
-        pip_value = 1000.0 / entry      # 100k units × 0.01 pip / rate
-    elif symbol in ("USD/CAD", "USD/CHF"):
-        pip_value = 10.0 / entry        # 100k × 0.0001 pip / rate (quote = CAD/CHF)
-    elif symbol == "EUR/CHF":
-        # quote currency CHF: convert 10 CHF/pip to USD via USD/CHF rate
-        try:
-            usdchf = fetch_ohlcv("USD/CHF", outputsize=1, interval="1h")["close"].iloc[-1]
-        except Exception:
-            raise RuntimeError("Could not fetch USD/CHF rate for EUR/CHF lot calculation")
-        pip_value = 10.0 / usdchf
+    if SYMBOL_GROUP.get(symbol) in {"forex", "forex_cross"} and "/" in symbol:
+        pip_value = _forex_pip_value_usd(symbol, entry)
     else:
         pip_value = cfg["pip_value"]
     balance = _get_balance()
@@ -362,7 +402,7 @@ def _eurusd_potential_filter(signal: int, df_entry: pd.DataFrame,
 def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float = 1.0,
                 sl_mult: float = ATR_SL_MULT, tp_mult: float = ATR_TP1_MULT,
                 tp_price: float | None = None):
-    mt4_symbol = td_symbol.replace("/", "")
+    mt4_symbol = _mt4_symbol(td_symbol)
     entry = df["close"].iloc[-1]
     atr = _atr(df)
 
@@ -400,7 +440,7 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
 
 
 def _send_close(symbol: str, reason: str):
-    mt4_symbol = symbol.replace("/", "")
+    mt4_symbol = _mt4_symbol(symbol)
     try:
         resp = _bridge_session.post(f"{BRIDGE_URL}/signal", json={
             "symbol": mt4_symbol, "action": "CLOSE",
@@ -598,6 +638,10 @@ def trading_loop():
                             signal = STRATEGY_METALS_XAG.generate_signal(df_closed, df_xau=df_xau_h4.iloc[:-1])
                         else:
                             signal = STRATEGY_METALS_XAU.generate_signal(df_closed)
+                    elif asset_profile == "index":
+                        signal = STRATEGY_INDEX.generate_signal(df_closed)
+                    elif asset_profile == "energy":
+                        signal = STRATEGY_ENERGY.generate_signal(df_closed)
                     else:
                         signal = 0
                     rules = rules_for(symbol)
@@ -732,7 +776,7 @@ def _load_active_signals():
 def _clear_signal_files():
     all_symbols = list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS))
     for symbol in all_symbols:
-        mt4_symbol = symbol.replace("/", "")
+        mt4_symbol = _mt4_symbol(symbol)
         try:
             _bridge_session.post(f"{BRIDGE_URL}/signal", json={
                 "symbol": mt4_symbol, "action": "NONE",
@@ -748,7 +792,7 @@ def _data_check():
     if datetime.now(timezone.utc).weekday() >= 5:
         all_symbols = ALWAYS_SYMBOLS
     else:
-        all_symbols = ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS
+        all_symbols = list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS))
     ok = True
     for symbol in all_symbols:
         for interval in ("1h", "4h", "1day"):
@@ -776,7 +820,7 @@ def main():
         sys.exit(1)
     threading.Thread(target=run_server, daemon=True).start()
     print(f"MT4 bridge running at {BRIDGE_URL}")
-    print("Symbols:", ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS)
+    print("Symbols:", list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS)))
     time.sleep(1)  # wait for server to start
     _clear_signal_files()
     _data_check()

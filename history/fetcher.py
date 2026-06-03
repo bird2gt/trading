@@ -19,12 +19,26 @@ SYMBOL_MAP_YAHOO = {
     "USD/CAD": "USDCAD=X",
     "AUD/USD": "AUDUSD=X",
     "USD/JPY": "USDJPY=X",
+    "NZD/CHF": "NZDCHF=X",
+    "AUD/CHF": "AUDCHF=X",
+    "NZD/JPY": "NZDJPY=X",
+    "NZD/CAD": "NZDCAD=X",
     "BTC/USD": "BTC-USD",
     "ETH/USD": "ETH-USD",
     "XAU/USD": "GC=F",
     "XAG/USD": "SI=F",
     "WTI/USD": "CL=F",
     "BRENT/USD": "BZ=F",
+    "WTI": "CL=F",
+    "BRENT": "BZ=F",
+    "USTEC": "^NDX",
+    "US500": "^GSPC",
+    "DE40": "^GDAXI",
+    "JP225": "^N225",
+    ".USTEC": "^NDX",
+    ".US500": "^GSPC",
+    ".DE40C": "^GDAXI",
+    ".JP225": "^N225",
 }
 
 _YAHOO_PERIOD = {
@@ -49,6 +63,10 @@ _ALPHA_FX_MAP = {
     "USD/JPY": ("USD", "JPY"),
     "USD/CAD": ("USD", "CAD"),
     "AUD/USD": ("AUD", "USD"),
+    "NZD/CHF": ("NZD", "CHF"),
+    "AUD/CHF": ("AUD", "CHF"),
+    "NZD/JPY": ("NZD", "JPY"),
+    "NZD/CAD": ("NZD", "CAD"),
     "XAU/USD": ("XAU", "USD"),
     "XAG/USD": ("XAG", "USD"),
 }
@@ -92,6 +110,10 @@ _TIINGO_FX_MAP = {
     "USD/CAD": "usdcad",
     "AUD/USD": "audusd",
     "EUR/CHF": "eurchf",
+    "NZD/CHF": "nzdchf",
+    "AUD/CHF": "audchf",
+    "NZD/JPY": "nzdjpy",
+    "NZD/CAD": "nzdcad",
 }
 _TIINGO_RESAMPLE = {
     "15min": "15min",
@@ -110,12 +132,18 @@ _POLYGON_MAP = {
     "USD/CAD":  "C:USDCAD",
     "AUD/USD":  "C:AUDUSD",
     "EUR/CHF":  "C:EURCHF",
+    "NZD/CHF":  "C:NZDCHF",
+    "AUD/CHF":  "C:AUDCHF",
+    "NZD/JPY":  "C:NZDJPY",
+    "NZD/CAD":  "C:NZDCAD",
     "XAU/USD":  "C:XAUUSD",
     "XAG/USD":  "C:XAGUSD",
     "BTC/USD":  "X:BTCUSD",
     "ETH/USD":  "X:ETHUSD",
     "WTI/USD":  "C:WTIUSD",
     "BRENT/USD": "C:BCOUSD",
+    "WTI":      "C:WTIUSD",
+    "BRENT":    "C:BCOUSD",
 }
 _POLYGON_TIMESPAN = {
     "15min": (15, "minute"),
@@ -135,6 +163,10 @@ _STOOQ_MAP = {
     "USD/JPY": "usdjpy",
     "USD/CAD": "usdcad",
     "AUD/USD": "audusd",
+    "NZD/CHF": "nzdchf",
+    "AUD/CHF": "audchf",
+    "NZD/JPY": "nzdjpy",
+    "NZD/CAD": "nzdcad",
     "XAU/USD": "xauusd",
     "XAG/USD": "xagusd",
     "BTC/USD": "btcusd",
@@ -169,9 +201,24 @@ _OHLCV_SECRET_ENV = (
 
 
 def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.DataFrame:
+    now = pd.Timestamp.now('UTC').tz_convert(None)
     frames = []
-    for source in (_fetch_recorded, _fetch_yahoo, _fetch_binance, _fetch_twelve, _fetch_tiingo,
-                   _fetch_alpha, _fetch_finage, _fetch_polygon, _fetch_stooq):
+    sources = {
+        "_fetch_recorded": _fetch_recorded,
+        "_fetch_yahoo": _fetch_yahoo,
+        "_fetch_binance": _fetch_binance,
+        "_fetch_twelve": _fetch_twelve,
+        "_fetch_tiingo": _fetch_tiingo,
+        "_fetch_alpha": _fetch_alpha,
+        "_fetch_finage": _fetch_finage,
+        "_fetch_polygon": _fetch_polygon,
+        "_fetch_stooq": _fetch_stooq,
+    }
+    priority = _SOURCE_PRIORITY.get(_asset_class(symbol), _SOURCE_PRIORITY["other"])
+    ordered_names = list(dict.fromkeys(priority + tuple(sources)))
+
+    for source_name in ordered_names:
+        source = sources[source_name]
         source_name = source.__name__
         if symbol in {"XAU/USD", "XAG/USD"} and source_name == "_fetch_yahoo":
             continue
@@ -179,19 +226,27 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
             df = source(symbol, interval, outputsize)
             if not df.empty:
                 frames.append((source_name, df))
+                candidate = df[df.index <= now].iloc[-outputsize:]
+                if not candidate.empty:
+                    age_h = (now - candidate.index[-1]).total_seconds() / 3600
+                    if age_h <= _stale_limit_hours(symbol, interval):
+                        return _finalize_ohlcv(symbol, interval, candidate)
         except Exception as e:
             key = (source_name, symbol, interval)
-            now = time.time()
-            if now - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
+            now_s = time.time()
+            if now_s - _source_warn_at.get(key, 0) >= _SOURCE_WARN_TTL:
                 print(f"[WARN] {source_name}({symbol}, {interval}): {type(e).__name__}: {_mask_secrets(str(e))}")
-                _source_warn_at[key] = now
+                _source_warn_at[key] = now_s
             continue
 
     if not frames:
         raise ValueError(f"No data for {symbol} from any source")
 
-    now = pd.Timestamp.now('UTC').tz_convert(None)
     result = _select_frame(symbol, interval, outputsize, frames, now)
+    return _finalize_ohlcv(symbol, interval, result)
+
+
+def _finalize_ohlcv(symbol: str, interval: str, result: pd.DataFrame) -> pd.DataFrame:
     if interval == "4h":
         # The selected source may phase 4h bars off the even grid (Twelve Data starts at 01:00,
         # so hours land on {1,5,9,13,17,21}). Snap to the canonical {0,4,8,12,16,20} grid so
@@ -670,6 +725,10 @@ def _asset_class(symbol: str) -> str:
         return "crypto"
     if symbol in {"XAU/USD", "XAG/USD"}:
         return "metal"
+    if symbol in {"BRENT", "WTI", "BRENT/USD", "WTI/USD"}:
+        return "energy"
+    if symbol in {"USTEC", "US500", "DE40", "JP225", ".USTEC", ".US500", ".DE40C", ".JP225"}:
+        return "index"
     if "/" in symbol:
         return "forex"
     return "other"
@@ -709,6 +768,8 @@ def _select_frame(symbol: str, interval: str, outputsize: int,
 def _stale_limit_hours(symbol: str, interval: str) -> int:
     if symbol == "XAG/USD" and interval == "1h":
         return 4
+    if _asset_class(symbol) in {"index", "energy"}:
+        return {"15min": 4, "1h": 18, "4h": 30, "1day": 96}.get(interval, 18)
     return _STALE_HOURS.get(interval, 8)
 
 

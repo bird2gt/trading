@@ -87,6 +87,26 @@ FEEDS.update({
     "AUD/USD": list(FEEDS["USD/CHF"]),
     "USD/JPY": list(FEEDS["USD/CHF"]),
     "ETH/USD": list(FEEDS["BTC/USD"]),
+    "NZD/CHF": list(FEEDS["USD/CHF"]),
+    "AUD/CHF": list(FEEDS["USD/CHF"]),
+    "NZD/JPY": list(FEEDS["USD/CHF"]),
+    "NZD/CAD": list(FEEDS["USD/CHF"]),
+    "BRENT": [
+        "https://www.forexlive.com/feed/",
+        "https://feeds.reuters.com/reuters/topNews",
+        "https://feeds.marketwatch.com/marketwatch/realtimeheadlines/",
+        "https://feeds.feedburner.com/zerohedge/feed",
+    ],
+    "WTI": [
+        "https://www.forexlive.com/feed/",
+        "https://feeds.reuters.com/reuters/topNews",
+        "https://feeds.marketwatch.com/marketwatch/realtimeheadlines/",
+        "https://feeds.feedburner.com/zerohedge/feed",
+    ],
+    "USTEC": list(FEEDS["EUR/USD"]),
+    "US500": list(FEEDS["EUR/USD"]),
+    "DE40": list(FEEDS["EUR/USD"]),
+    "JP225": list(FEEDS["USD/CHF"]),
 })
 
 KEYWORDS.update({
@@ -96,6 +116,16 @@ KEYWORDS.update({
     "AUD/USD": ["australian", "aussie", "aud", "rba", "reserve bank of australia", "china", "iron ore", "dollar", "usd", "fed ", "forex"],
     "USD/JPY": ["yen", "jpy", "boj", "bank of japan", "japan", "treasury yields", "dollar", "usd", "fed ", "forex"],
     "ETH/USD": ["ethereum", "ether", "eth", "crypto", "cryptocurrency", "defi", "etf"],
+    "NZD/CHF": ["new zealand", "nzd", "rnbz", "swiss", "chf", "snb", "franc", "forex"],
+    "AUD/CHF": ["australian", "aussie", "aud", "rba", "swiss", "chf", "snb", "franc", "forex"],
+    "NZD/JPY": ["new zealand", "nzd", "rnbz", "yen", "jpy", "boj", "risk", "forex"],
+    "NZD/CAD": ["new zealand", "nzd", "rnbz", "canadian", "cad", "boc", "oil", "forex"],
+    "BRENT": ["brent", "oil", "crude", "opec", "energy", "inventory", "geopolitical"],
+    "WTI": ["wti", "oil", "crude", "opec", "energy", "inventory", "eia"],
+    "USTEC": ["nasdaq", "technology", "tech stocks", "yields", "fed ", "risk", "ai"],
+    "US500": ["s&p", "sp500", "s&p 500", "stocks", "yields", "fed ", "risk"],
+    "DE40": ["dax", "germany", "eurozone", "ecb", "stocks", "europe"],
+    "JP225": ["nikkei", "japan", "boj", "yen", "jpy", "stocks"],
 })
 
 # Specialized feeds — headlines already targeted, skip keyword filter

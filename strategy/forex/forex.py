@@ -1,6 +1,7 @@
 import pandas as pd
 
 from .base import BaseStrategy
+from .breakout_adx import BreakoutAdx
 from .pair_profiles import (
     DisabledEngine,
     EurChfMeanReversion,
@@ -27,6 +28,22 @@ class Forex(BaseStrategy):
             "AUD/USD": PairProfile("AUD/USD Disabled (neg EV)", DisabledEngine()),
             "EUR/CHF": EurChfMeanReversion(),
             "USD/CAD": UsdCadBreakout(),
+            "NZD/CHF": PairProfile(
+                "NZD/CHF Breakout ADX",
+                BreakoutAdx(period=24, adx_period=14, adx_threshold=25.0, adx_rising_bars=3),
+            ),
+            "AUD/CHF": PairProfile(
+                "AUD/CHF Breakout ADX",
+                BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_rising_bars=3),
+            ),
+            "NZD/JPY": PairProfile(
+                "NZD/JPY Breakout ADX",
+                BreakoutAdx(period=20, adx_period=14, adx_threshold=23.0, adx_rising_bars=3),
+            ),
+            "NZD/CAD": PairProfile(
+                "NZD/CAD Breakout ADX",
+                BreakoutAdx(period=24, adx_period=14, adx_threshold=25.0, adx_rising_bars=3),
+            ),
         }
 
     def generate_signal(self, df: pd.DataFrame, **kwargs) -> int:

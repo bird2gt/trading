@@ -29,10 +29,20 @@ _CURRENCIES = {
     "USD/CAD": {"USD", "CAD"},
     "AUD/USD": {"AUD", "USD"},
     "USD/JPY": {"USD", "JPY"},
+    "NZD/CHF": {"NZD", "CHF"},
+    "AUD/CHF": {"AUD", "CHF"},
+    "NZD/JPY": {"NZD", "JPY"},
+    "NZD/CAD": {"NZD", "CAD"},
     "BTC/USD": {"USD"},
     "ETH/USD": {"USD"},
     "XAU/USD": {"USD"},
     "XAG/USD": {"USD"},
+    "BRENT": {"USD"},
+    "WTI": {"USD"},
+    "USTEC": {"USD"},
+    "US500": {"USD"},
+    "DE40": {"EUR"},
+    "JP225": {"JPY"},
 }
 
 HOURS_BEFORE = 2   # block N hours before event
