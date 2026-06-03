@@ -93,10 +93,10 @@ MT4_SYMBOL_MAP = {
     "NZD/CAD": "NZDCAD",
     "BRENT": "BRENT",
     "WTI": "WTI",
-    "USTEC": "USTEC",
-    "US500": "US500Cash",
-    "DE40": "DE40Cash",
-    "JP225": "JP225Cash",
+    "USTEC": ".USTECHCash",   # RoboForex prefixes index CFDs with a dot
+    "US500": ".US500Cash",
+    "DE40": ".DE40Cash",
+    "JP225": ".JP225Cash",
 }
 
 CORR_GROUPS = [
