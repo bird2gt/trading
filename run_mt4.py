@@ -473,6 +473,45 @@ def _sleep_until_open():
     return
 
 
+# One-shot reminder: on/after this date, ping Telegram once that the intraday
+# surprise layer runs on a price proxy, and a calendar-with-actual subscription
+# (Finnhub / TradingEconomics) would enable exact "actual vs forecast".
+SUBS_REMINDER_DATE = date(2026, 7, 3)
+SUBS_REMINDER_MARKER = Path(__file__).resolve().parent / "logs" / "calendar_actual_reminder.sent"
+SUBS_REMINDER_TEXT = (
+    "🔔 Напоминание: внутридневной surprise-слой работает по РЕАКЦИИ ЦЕНЫ (прокси). "
+    "Для точного «факт vs прогноз» нужна подписка на эконом-календарь с actual "
+    "(Finnhub / TradingEconomics). Захочешь подключать — скажи Claude, добавим "
+    "разбор actual в bias/surprise.py."
+)
+
+
+def _maybe_send_subscription_reminder() -> None:
+    """Fire once on/after SUBS_REMINDER_DATE, then never again (marker file)."""
+    if _utc_today() < SUBS_REMINDER_DATE or SUBS_REMINDER_MARKER.exists():
+        return
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": SUBS_REMINDER_TEXT},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[WARN] subscription reminder send failed: {e}")
+        return
+    try:
+        SUBS_REMINDER_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        SUBS_REMINDER_MARKER.write_text(_utc_today().isoformat(), encoding="utf-8")
+    except Exception as e:
+        print(f"[WARN] could not persist reminder marker: {e}")
+    print("Subscription reminder sent → Telegram")
+
+
 def trading_loop():
     global _last_digest_date, _last_calendar_date, _last_journal_sync
     while True:
@@ -490,6 +529,8 @@ def trading_loop():
         if time.time() - _last_journal_sync >= 3600:
             journal_sync()
             _last_journal_sync = time.time()
+
+        _maybe_send_subscription_reminder()
 
         _load_active_signals()
 
