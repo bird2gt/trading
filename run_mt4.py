@@ -23,6 +23,7 @@ from analytics.sentiment import analyze_sentiment
 from analytics.fear_greed import get_value as get_fg_value
 from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
+from analytics.learning import run_learning
 from bias import resolve_bias
 from broker.mt4_bridge import run_server
 
@@ -126,6 +127,7 @@ _DAY_START_FILE = Path(__file__).resolve().parent / "logs" / "day_start.json"
 _last_digest_date: date | None = None
 _last_calendar_date: date | None = None
 _last_journal_sync: float = 0.0
+_last_learning_run: float = 0.0
 
 
 def _active_symbols() -> list[str]:
@@ -552,8 +554,17 @@ def _maybe_send_subscription_reminder() -> None:
     print("Subscription reminder sent → Telegram")
 
 
+def _run_learning_report() -> None:
+    global _last_learning_run
+    try:
+        run_learning()
+        _last_learning_run = time.time()
+    except Exception as e:
+        print(f"[learning] report failed: {e}")
+
+
 def trading_loop():
-    global _last_digest_date, _last_calendar_date, _last_journal_sync
+    global _last_digest_date, _last_calendar_date, _last_journal_sync, _last_learning_run
     while True:
         logger.info("Starting new poll cycle...")
         _sleep_until_open()
@@ -567,8 +578,10 @@ def trading_loop():
             threading.Thread(target=run_digest, daemon=True).start()
 
         if time.time() - _last_journal_sync >= 3600:
-            journal_sync()
+            new_trades = journal_sync()
             _last_journal_sync = time.time()
+            if new_trades or time.time() - _last_learning_run >= 21600:
+                threading.Thread(target=_run_learning_report, daemon=True).start()
 
         _maybe_send_subscription_reminder()
 
@@ -827,6 +840,7 @@ def main():
     _load_active_signals()
     journal_sync()
     journal_stats()
+    _run_learning_report()
     trading_loop()
 
 

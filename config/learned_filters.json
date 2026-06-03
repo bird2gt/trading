@@ -1,0 +1,277 @@
+{
+  "generated_at": "2026-06-03T15:07:11+00:00",
+  "min_segment_trades": 8,
+  "min_symbol_trades": 20,
+  "mode": "recommendations_only",
+  "summary": {
+    "avg_realized_r": 0.29,
+    "expectancy": 0.35,
+    "net_profit": 2.42,
+    "profit_factor": 1.04,
+    "trades": 7,
+    "win_rate": 42.9
+  },
+  "symbols": {
+    "BTC/USD": {
+      "asset_group": "crypto",
+      "metrics": {
+        "avg_loss": -23.43,
+        "avg_realized_r": -0.1,
+        "avg_win": 17.57,
+        "expectancy": -2.93,
+        "losses": 1,
+        "net_profit": -5.86,
+        "profit_factor": 0.75,
+        "trades": 2,
+        "win_rate": 50.0,
+        "wins": 1
+      },
+      "recommendation": {
+        "allowed_sessions": [],
+        "avoid_sessions": [],
+        "avoid_sides": [],
+        "disabled": false,
+        "preferred_sides": [],
+        "reason": "Need at least 20 closed trades for a hard decision.",
+        "recommended_disabled": false,
+        "status": "insufficient_data"
+      },
+      "sessions": {
+        "us": {
+          "avg_loss": -23.43,
+          "avg_realized_r": -0.1,
+          "avg_win": 17.57,
+          "expectancy": -2.93,
+          "losses": 1,
+          "net_profit": -5.86,
+          "profit_factor": 0.75,
+          "trades": 2,
+          "win_rate": 50.0,
+          "wins": 1
+        }
+      },
+      "sides": {
+        "SELL": {
+          "avg_loss": -23.43,
+          "avg_realized_r": -0.1,
+          "avg_win": 17.57,
+          "expectancy": -2.93,
+          "losses": 1,
+          "net_profit": -5.86,
+          "profit_factor": 0.75,
+          "trades": 2,
+          "win_rate": 50.0,
+          "wins": 1
+        }
+      },
+      "weekdays": {
+        "tue": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 0.84,
+          "avg_win": 17.57,
+          "expectancy": 17.57,
+          "losses": 0,
+          "net_profit": 17.57,
+          "profit_factor": null,
+          "trades": 1,
+          "win_rate": 100.0,
+          "wins": 1
+        },
+        "wed": {
+          "avg_loss": -23.43,
+          "avg_realized_r": -1.05,
+          "avg_win": 0.0,
+          "expectancy": -23.43,
+          "losses": 1,
+          "net_profit": -23.43,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      }
+    },
+    "ETH/USD": {
+      "asset_group": "crypto",
+      "metrics": {
+        "avg_loss": 0.0,
+        "avg_realized_r": 1.2,
+        "avg_win": 24.15,
+        "expectancy": 24.15,
+        "losses": 0,
+        "net_profit": 48.29,
+        "profit_factor": null,
+        "trades": 2,
+        "win_rate": 100.0,
+        "wins": 2
+      },
+      "recommendation": {
+        "allowed_sessions": [],
+        "avoid_sessions": [],
+        "avoid_sides": [],
+        "disabled": false,
+        "preferred_sides": [],
+        "reason": "Need at least 20 closed trades for a hard decision.",
+        "recommended_disabled": false,
+        "status": "insufficient_data"
+      },
+      "sessions": {
+        "london": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 0.24,
+          "avg_win": 1.42,
+          "expectancy": 1.42,
+          "losses": 0,
+          "net_profit": 1.42,
+          "profit_factor": null,
+          "trades": 1,
+          "win_rate": 100.0,
+          "wins": 1
+        },
+        "us": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 2.16,
+          "avg_win": 46.87,
+          "expectancy": 46.87,
+          "losses": 0,
+          "net_profit": 46.87,
+          "profit_factor": null,
+          "trades": 1,
+          "win_rate": 100.0,
+          "wins": 1
+        }
+      },
+      "sides": {
+        "SELL": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 1.2,
+          "avg_win": 24.15,
+          "expectancy": 24.15,
+          "losses": 0,
+          "net_profit": 48.29,
+          "profit_factor": null,
+          "trades": 2,
+          "win_rate": 100.0,
+          "wins": 2
+        }
+      },
+      "weekdays": {
+        "tue": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 2.16,
+          "avg_win": 46.87,
+          "expectancy": 46.87,
+          "losses": 0,
+          "net_profit": 46.87,
+          "profit_factor": null,
+          "trades": 1,
+          "win_rate": 100.0,
+          "wins": 1
+        },
+        "wed": {
+          "avg_loss": 0.0,
+          "avg_realized_r": 0.24,
+          "avg_win": 1.42,
+          "expectancy": 1.42,
+          "losses": 0,
+          "net_profit": 1.42,
+          "profit_factor": null,
+          "trades": 1,
+          "win_rate": 100.0,
+          "wins": 1
+        }
+      }
+    },
+    "EUR/CHF": {
+      "asset_group": "forex",
+      "metrics": {
+        "avg_loss": -13.34,
+        "avg_realized_r": -0.06,
+        "avg_win": 0.0,
+        "expectancy": -13.34,
+        "losses": 3,
+        "net_profit": -40.01,
+        "profit_factor": 0.0,
+        "trades": 3,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "recommendation": {
+        "allowed_sessions": [],
+        "avoid_sessions": [],
+        "avoid_sides": [],
+        "disabled": false,
+        "preferred_sides": [],
+        "reason": "Need at least 20 closed trades for a hard decision.",
+        "recommended_disabled": false,
+        "status": "insufficient_data"
+      },
+      "sessions": {
+        "london": {
+          "avg_loss": -13.34,
+          "avg_realized_r": -0.06,
+          "avg_win": 0.0,
+          "expectancy": -13.34,
+          "losses": 3,
+          "net_profit": -40.01,
+          "profit_factor": 0.0,
+          "trades": 3,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      },
+      "sides": {
+        "BUY": {
+          "avg_loss": -4.47,
+          "avg_realized_r": -0.02,
+          "avg_win": 0.0,
+          "expectancy": -4.47,
+          "losses": 1,
+          "net_profit": -4.47,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        },
+        "SELL": {
+          "avg_loss": -17.77,
+          "avg_realized_r": -0.07,
+          "avg_win": 0.0,
+          "expectancy": -17.77,
+          "losses": 2,
+          "net_profit": -35.54,
+          "profit_factor": 0.0,
+          "trades": 2,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      },
+      "weekdays": {
+        "fri": {
+          "avg_loss": -17.77,
+          "avg_realized_r": -0.07,
+          "avg_win": 0.0,
+          "expectancy": -17.77,
+          "losses": 2,
+          "net_profit": -35.54,
+          "profit_factor": 0.0,
+          "trades": 2,
+          "win_rate": 0.0,
+          "wins": 0
+        },
+        "mon": {
+          "avg_loss": -4.47,
+          "avg_realized_r": -0.02,
+          "avg_win": 0.0,
+          "expectancy": -4.47,
+          "losses": 1,
+          "net_profit": -4.47,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      }
+    }
+  }
+}
