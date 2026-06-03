@@ -21,7 +21,9 @@ class MetalsSession(BaseStrategy):
     XAG generate_signal accepts an optional df_xau kwarg for the Gold/Silver ratio filter.
     """
 
-    _XAU_STRAT = ZScoreAdxTrend(z_period=20, z_entry=1.5, adx_period=14, adx_threshold=20.0)
+    # z_entry 2.0 + ADX 25 (was 1.5/20): stricter filter ~halves entries (118→46 over 12mo),
+    # turning gold's trend from churn (PF≈1.0) into profit (PF 1.30 / +$1.2k 12mo backtest).
+    _XAU_STRAT = ZScoreAdxTrend(z_period=20, z_entry=2.0, adx_period=14, adx_threshold=25.0)
     _XAG_STRAT = Silver(ema_fast=21, ema_slow=55, rsi_period=14, rsi_buy=40.0, rsi_sell=60.0,
                         adx_period=14, adx_threshold=20.0, ratio_high=80.0, ratio_low=65.0)
 

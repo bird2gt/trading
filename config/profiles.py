@@ -10,6 +10,7 @@ PROFILES = {
         "risk_pct": 0.02, "sl_mult": 1.5, "tp_mult": 1.5,
         "symbols": {
             "GBP/USD": {"sl_mult": 2.0},   # шире ATR-стоп
+            "USD/CAD": {"sl_mult": 2.0},   # 1.5/1.5≈безубыток → 2.0/1.5 плюс в обоих окнах (бэктест)
         },
     },
     "crypto": {

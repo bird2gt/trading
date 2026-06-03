@@ -2,10 +2,11 @@ import pandas as pd
 
 from .base import BaseStrategy
 from .pair_profiles import (
-    AudUsdBreakout,
+    DisabledEngine,
     EurChfMeanReversion,
     EurUsdDefensive,
     GbpUsdSwing,
+    PairProfile,
     UsdCadBreakout,
     UsdChfBreakout,
     UsdJpyDefensive,
@@ -21,7 +22,9 @@ class Forex(BaseStrategy):
             "GBP/USD": GbpUsdSwing(),
             "USD/CHF": UsdChfBreakout(),
             "USD/JPY": UsdJpyDefensive(),
-            "AUD/USD": AudUsdBreakout(),
+            # AUD/USD disabled: BreakoutAdx is net-negative over 12mo (−$1.3k; every R:R combo
+            # PF<0.9 in backtest). Re-enable via AudUsdBreakout() once the engine is reworked.
+            "AUD/USD": PairProfile("AUD/USD Disabled (neg EV)", DisabledEngine()),
             "EUR/CHF": EurChfMeanReversion(),
             "USD/CAD": UsdCadBreakout(),
         }
