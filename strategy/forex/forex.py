@@ -3,7 +3,7 @@ import pandas as pd
 from .base import BaseStrategy
 from .breakout_adx import BreakoutAdx
 from .pair_profiles import (
-    DisabledEngine,
+    AudUsdSwing,
     EurChfMeanReversion,
     EurUsdDefensive,
     GbpUsdSwing,
@@ -23,9 +23,7 @@ class Forex(BaseStrategy):
             "GBP/USD": GbpUsdSwing(),
             "USD/CHF": UsdChfBreakout(),
             "USD/JPY": UsdJpyDefensive(),
-            # AUD/USD disabled: BreakoutAdx is net-negative over 12mo (−$1.3k; every R:R combo
-            # PF<0.9 in backtest). Re-enable via AudUsdBreakout() once the engine is reworked.
-            "AUD/USD": PairProfile("AUD/USD Disabled (neg EV)", DisabledEngine()),
+            "AUD/USD": AudUsdSwing(),   # re-enabled 2026-06-04: 2B (PF 1.39/12mo backtest)
             "EUR/CHF": EurChfMeanReversion(),
             "USD/CAD": UsdCadBreakout(),
             "NZD/CHF": PairProfile(

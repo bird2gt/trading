@@ -52,11 +52,13 @@ class UsdJpyDefensive(PairProfile):
         )
 
 
-class AudUsdBreakout(PairProfile):
+class AudUsdSwing(PairProfile):
+    # 2026-06-04: backtested over 12mo — 2B beat BreakoutADX/AdxMa/ZScore on AUD/USD
+    # (PF 1.39 / +$2.3k vs PF<0.7 net-negative for breakout/trend). Same engine as GBP/USD, USD/JPY.
     def __init__(self):
         super().__init__(
-            "AUD/USD Breakout ADX",
-            BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_rising_bars=3),
+            "AUD/USD TakeProfit 2B",
+            TwoB(lookback=20),
         )
 
 
