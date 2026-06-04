@@ -210,7 +210,7 @@ def run_digest() -> None:
         for topic, posts in by_topic.items():
             text = "\n".join(f"- {p}" for p in posts[:20])
             resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-sonnet-4-6",
                 max_tokens=600,
                 system=(
                     "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. "
@@ -237,7 +237,7 @@ def run_digest() -> None:
             posts.append(line)
         text = "\n".join(posts)
         resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             system=(
                 "ВАЖНО: отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Ни одного слова по-английски. "
@@ -386,7 +386,7 @@ def _derive_universe_bias(client, digest_text: str) -> dict[str, tuple[int, str]
     syms = ", ".join(_DERIVED_UNIVERSE)
     try:
         resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=400,
             system=(
                 "Ты макро-аналитик. На основе дайджеста определи направление на сегодня "
