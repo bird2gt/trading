@@ -27,8 +27,10 @@ from analytics.learning import run_learning
 from bias import resolve_bias
 from broker.mt4_bridge import run_server
 
-# Setup basic logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Setup basic logging — timestamps in UTC to match the session/weekend gate
+logging.Formatter.converter = time.gmtime
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s UTC - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 BRIDGE_URL = "http://127.0.0.1:8000"
@@ -43,10 +45,11 @@ from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_
 
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
+MAJOR_SYMBOLS  = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
 ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"]
 LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
-                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"]
-US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500"]
+                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"] + MAJOR_SYMBOLS
+US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500"] + MAJOR_SYMBOLS
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
 # Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
@@ -81,6 +84,7 @@ BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
     "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD",
+    *MAJOR_SYMBOLS,   # majors restored alongside the intraday set — same Forex profile strategy
 }
 
 MT4_SYMBOL_MAP = {
