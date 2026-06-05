@@ -57,3 +57,7 @@ class Forex(BaseStrategy):
         if strategy is None:
             return "Forex Disabled"
         return getattr(strategy, "name", type(strategy).__name__)
+
+    def is_mean_reverting(self, symbol: str) -> bool:
+        strategy = self.by_symbol.get(symbol)
+        return bool(getattr(strategy, "mean_reverting", False))

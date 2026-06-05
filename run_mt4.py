@@ -670,8 +670,11 @@ def trading_loop():
                     print(f"{symbol}: no signal")
                     continue
 
-                # market structure filter (SMA mode only)
-                if not in_news_window:
+                # market structure filter — trend-following gate; skip for
+                # mean-reverting forex engines (they buy dips / sell rallies, so
+                # blocking BUY in LH/LL kills their edge — see backtest 2026-06-05)
+                mean_reverting = symbol in FOREX_SYMBOLS and STRATEGY_FOREX.is_mean_reverting(symbol)
+                if not in_news_window and not mean_reverting:
                     struct = market_structure(df_closed)
                     if signal == 1 and struct == -1:
                         print(f"{symbol}: BUY blocked — bearish structure (LH/LL)")
@@ -679,6 +682,7 @@ def trading_loop():
                     if signal == -1 and struct == 1:
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
+                if not in_news_window:
                     tp_price = fib_tp(df_closed, signal, level=1.272) if asset_profile != "metal" else None
 
                 # Fear & Greed filter — crypto only, trend-following mode
