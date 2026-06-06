@@ -104,23 +104,17 @@ MT4_SYMBOL_MAP = {
     "JP225": ".JP225Cash",
 }
 
+# Forex correlation is handled by per-currency net-exposure (see _correlated_conflict):
+# every forex pair nets ±1 on its base/quote, and a signal is blocked once it would
+# push |net| on any currency past CURRENCY_EXPOSURE_CAP. This replaces the old hand-
+# written forex groups + inverse groups (measured: cap=2 beats them on PnL/drawdown).
+# Non-forex assets have no base/quote currency, so they keep explicit groups here.
+CURRENCY_EXPOSURE_CAP = 2  # max net positions per currency (e.g. EUR/USD + EUR/CHF longs ok, third blocked)
+
 CORR_GROUPS = [
-    {"EUR/USD", "GBP/USD", "AUD/USD"},  # USD quote pairs: block duplicated USD shorts/longs
-    {"USD/CHF", "USD/CAD"},             # USD base pairs: block duplicated USD exposure
     {"XAU/USD", "XAG/USD"},        # положительная корреляция: блокировать одинаковые действия
     {"BRENT", "WTI"},               # нефть: один и тот же драйвер
     {"USTEC", "US500"},             # US indices: не дублировать один и тот же риск-on/off
-    {"NZD/CHF", "NZD/JPY", "NZD/CAD"},  # NZD exposure
-    {"NZD/CHF", "AUD/CHF"},         # CHF exposure
-]
-# Обратная корреляция: блокировать ПРОТИВОПОЛОЖНЫЕ действия (BUY одного = SELL другого = двойной шорт USD)
-INVERSE_CORR_GROUPS = [
-    {"EUR/USD", "USD/CHF"},        # EUR/USD↑ = USD↓ = USD/CHF↓
-    {"GBP/USD", "USD/CHF"},        # GBP/USD↑ = USD↓ = USD/CHF↓
-    {"AUD/USD", "USD/CHF"},        # AUD/USD↑ = USD↓ = USD/CHF↓
-    {"EUR/USD", "USD/CAD"},        # EUR/USD↑ = USD↓ = USD/CAD↓
-    {"GBP/USD", "USD/CAD"},        # GBP/USD↑ = USD↓ = USD/CAD↓
-    {"AUD/USD", "USD/CAD"},        # AUD/USD↑ = USD↓ = USD/CAD↓
 ]
 _MT4_TO_PY = {mt4: py for py, mt4 in MT4_SYMBOL_MAP.items()}
 _MT4_TO_PY.update({s.replace("/", ""): s for s in SYMBOL_GROUP})
@@ -203,8 +197,32 @@ def _daily_drawdown_hit() -> bool:
     return False
 
 
+def _is_forex(symbol: str) -> bool:
+    return SYMBOL_GROUP.get(symbol) in {"forex", "forex_cross"} and "/" in symbol
+
+
+def _currency_net(extra: tuple[str, str] | None = None) -> dict[str, int]:
+    """Net exposure per currency from open forex positions (+1 base, -1 quote per
+    BUY; flipped for SELL). `extra` optionally adds a hypothetical (symbol, action)."""
+    net: dict[str, int] = {}
+    pairs = [(s, a) for s, a in _active_signals.items() if a in ("BUY", "SELL") and _is_forex(s)]
+    if extra is not None:
+        pairs.append(extra)
+    for sym, act in pairs:
+        base, quote = sym.split("/")
+        s = 1 if act == "BUY" else -1
+        net[base] = net.get(base, 0) + s
+        net[quote] = net.get(quote, 0) - s
+    return net
+
+
 def _correlated_conflict(symbol: str, action: str) -> bool:
-    # Положительная корреляция: блокировать одинаковые действия
+    # Forex: block once the entry would push net exposure on any currency past the cap
+    # (catches both same-direction stacks and inverse stacks, e.g. BUY EUR/USD + SELL USD/CHF).
+    if _is_forex(symbol):
+        net = _currency_net(extra=(symbol, action))
+        return any(abs(v) > CURRENCY_EXPOSURE_CAP for v in net.values())
+    # Non-forex (metals, oil, indices): explicit same-direction groups.
     for group in CORR_GROUPS:
         if symbol not in group:
             continue
@@ -212,16 +230,6 @@ def _correlated_conflict(symbol: str, action: str) -> bool:
             if other == symbol:
                 continue
             if _active_signals.get(other) == action:
-                return True
-    # Обратная корреляция: блокировать противоположные действия (обе позиции = одна сторона по USD)
-    opposite = "SELL" if action == "BUY" else "BUY"
-    for group in INVERSE_CORR_GROUPS:
-        if symbol not in group:
-            continue
-        for other in group:
-            if other == symbol:
-                continue
-            if _active_signals.get(other) == opposite:
                 return True
     return False
 
