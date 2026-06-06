@@ -92,7 +92,11 @@ def main() -> int:
         ALERT_MARKER.unlink(missing_ok=True)   # recovered — reset throttle
         return 0
     if not _recently_alerted():
-        _send_telegram(f"⚠️ Trading bot DOWN: {reason}")
+        restart_cmd = f"cd {ROOT} && nohup ./scripts/supervise_run_mt4.sh &"
+        _send_telegram(
+            f"⚠️ Trading bot DOWN: {reason}\n\n"
+            f"Подними вручную (напр. после перезагрузки Mac):\n{restart_cmd}"
+        )
         ALERT_MARKER.touch()
     print(f"[healthcheck] DOWN: {reason}")
     return 1
