@@ -46,9 +46,9 @@ from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 MAJOR_SYMBOLS  = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
-ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"]
+ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY"]
 LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
-                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD"] + MAJOR_SYMBOLS
+                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY"] + MAJOR_SYMBOLS
 US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500"] + MAJOR_SYMBOLS
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
@@ -83,7 +83,7 @@ STRATEGY_ENERGY = BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
-    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD",
+    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY",
     *MAJOR_SYMBOLS,   # majors restored alongside the intraday set — same Forex profile strategy
 }
 
@@ -96,6 +96,7 @@ MT4_SYMBOL_MAP = {
     "AUD/CHF": "AUDCHF",
     "NZD/JPY": "NZDJPY",
     "NZD/CAD": "NZDCAD",
+    "CHF/JPY": "CHFJPY",
     "BRENT": "BRENT",
     "WTI": "WTI",
     "USTEC": ".USTECHCash",   # RoboForex prefixes index CFDs with a dot
@@ -112,6 +113,7 @@ CORR_GROUPS = [
     {"USTEC", "US500"},             # US indices: не дублировать один и тот же риск-on/off
     {"NZD/CHF", "NZD/JPY", "NZD/CAD"},  # NZD exposure
     {"NZD/CHF", "AUD/CHF"},         # CHF exposure
+    {"NZD/JPY", "CHF/JPY"},         # JPY exposure (+0.55 daily-return corr)
 ]
 # Обратная корреляция: блокировать ПРОТИВОПОЛОЖНЫЕ действия (BUY одного = SELL другого = двойной шорт USD)
 INVERSE_CORR_GROUPS = [

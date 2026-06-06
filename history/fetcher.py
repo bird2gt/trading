@@ -23,6 +23,7 @@ SYMBOL_MAP_YAHOO = {
     "AUD/CHF": "AUDCHF=X",
     "NZD/JPY": "NZDJPY=X",
     "NZD/CAD": "NZDCAD=X",
+    "CHF/JPY": "CHFJPY=X",
     "BTC/USD": "BTC-USD",
     "ETH/USD": "ETH-USD",
     "XAU/USD": "GC=F",
