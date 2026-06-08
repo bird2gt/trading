@@ -12,6 +12,7 @@ from .pair_profiles import (
     UsdChfBreakout,
     UsdJpyDefensive,
 )
+from .take_profit import AdxMa
 
 
 class Forex(BaseStrategy):
@@ -41,6 +42,12 @@ class Forex(BaseStrategy):
             "NZD/CAD": PairProfile(
                 "NZD/CAD Breakout ADX",
                 BreakoutAdx(period=24, adx_period=14, adx_threshold=25.0, adx_rising_bars=3),
+            ),
+            # 2026-06-06: backtested over 12mo — AdxMa beat 2B/Breakout/ZScore on CHF/JPY
+            # (PF 1.54 / +$914, holds in both half-years; trend pair, not mean-reverting).
+            "CHF/JPY": PairProfile(
+                "CHF/JPY TakeProfit ADX+MA",
+                AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
             ),
         }
 
