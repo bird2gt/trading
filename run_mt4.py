@@ -25,6 +25,7 @@ from analytics.digest import run_digest
 from analytics.journal import sync as journal_sync, stats as journal_stats
 from analytics.learning import run_learning
 from bias import resolve_bias
+from bias.surprise import latest_move_z
 from broker.mt4_bridge import run_server
 
 # Setup basic logging — timestamps in UTC to match the session/weekend gate
@@ -566,6 +567,51 @@ def _maybe_send_subscription_reminder() -> None:
     print("Subscription reminder sent → Telegram")
 
 
+# Oil geo-risk news window: the economic calendar can't see a Middle-East/OPEC
+# supply shock, so the morning digest arms a daily flag and the bot only opens
+# the breakout window once price confirms it with a ≥3σ 15m move.
+_OIL_GEO_SYMBOLS = {"BRENT", "WTI"}
+GEO_Z_MIN = 3.0
+
+
+def _oil_geo_flag_active() -> bool:
+    """Read today's digest-written oil-geo-risk flag. Dated file, so yesterday's
+    flag can't carry over."""
+    path = Path(__file__).resolve().parent / "forecasts" / f"{_utc_today()}_oil_geo.flag"
+    try:
+        return path.read_text(encoding="utf-8").strip() == "1"
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        print(f"[WARN] oil-geo flag read failed: {e}")
+        return False
+
+
+def is_oil_geo_active(symbol: str) -> tuple[bool, str]:
+    """(True, event) when the oil-geo flag is armed AND oil is actually moving
+    (≥GEO_Z_MIN sigmas over the last ~45m). Mirrors is_high_impact_active's
+    shape so it can slot into the news_windows map."""
+    if symbol not in _OIL_GEO_SYMBOLS or not _oil_geo_flag_active():
+        return False, ""
+    try:
+        df15 = fetch_ohlcv(symbol, outputsize=200, interval="15min")
+    except Exception as e:
+        print(f"{symbol}: oil-geo move check skipped — 15m data unavailable: {e}")
+        return False, ""
+    z = latest_move_z(df15)
+    if z is not None and abs(z) >= GEO_Z_MIN:
+        return True, f"oil geo-risk ({z:+.1f}σ)"
+    return False, ""
+
+
+def _news_window_for(symbol: str) -> tuple[bool, str]:
+    """Calendar-driven news window, plus the oil geo-risk window for crude."""
+    active, event = is_high_impact_active(symbol)
+    if active:
+        return active, event
+    return is_oil_geo_active(symbol)
+
+
 def _run_learning_report() -> None:
     global _last_learning_run
     try:
@@ -610,7 +656,7 @@ def trading_loop():
         drawdown_hit = _daily_drawdown_hit()
         symbols = list(ALWAYS_SYMBOLS) if weekend else _active_symbols()
         news_windows = {
-            symbol: is_high_impact_active(symbol)
+            symbol: _news_window_for(symbol)
             for symbol in symbols
         }
         in_news_cycle = any(active for active, _ in news_windows.values())
