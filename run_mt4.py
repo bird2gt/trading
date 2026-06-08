@@ -55,8 +55,8 @@ LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
 US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500", "US30"] + MAJOR_SYMBOLS
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
-SIGNAL_CONFIRM_TIMEOUT = 20
-SIGNAL_CONFIRM_POLL = 2
+SIGNAL_CONFIRM_TIMEOUT = 60   # was 20: background charts under Wine throttle OnTimer
+SIGNAL_CONFIRM_POLL = 3       # between rare ticks on quiet pairs, so allow a longer wait
 FAILED_SIGNAL_COOLDOWN = 3600
 # Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
 WEEKEND_FLAT_HOUR = 20
