@@ -49,9 +49,9 @@ from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 MAJOR_SYMBOLS  = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
-ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY"]
+ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY", "GBP/JPY"]
 LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
-                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY"] + MAJOR_SYMBOLS
+                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY", "GBP/JPY"] + MAJOR_SYMBOLS
 US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500", "US30"] + MAJOR_SYMBOLS
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
@@ -97,7 +97,7 @@ STRATEGY_ENERGY = BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
-    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY",
+    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY", "GBP/JPY",
     *MAJOR_SYMBOLS,   # majors restored alongside the intraday set — same Forex profile strategy
 }
 
@@ -112,6 +112,7 @@ MT4_SYMBOL_MAP = {
     "NZD/CAD": "NZDCAD",
     "CHF/JPY": "CHFJPY",
     "AUD/JPY": "AUDJPY",
+    "GBP/JPY": "GBPJPY",
     "BRENT": "BRENT",
     "WTI": "WTI",
     "USTEC": ".USTECHCash",   # RoboForex prefixes index CFDs with a dot

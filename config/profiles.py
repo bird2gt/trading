@@ -21,6 +21,7 @@ PROFILES = {
             "NZD/JPY": {"adx_threshold": 23.0},
             "NZD/CAD": {"adx_threshold": 25.0},
             "AUD/JPY": {"adx_threshold": 20.0},   # AdxMa engine (PF 1.78/12mo backtest 2026-06-08)
+            "GBP/JPY": {"sl_mult": 2.0, "tp_mult": 1.5},   # MeanReversion engine (PF 1.61/1.61, backtest 2026-06-08)
         },
     },
     "crypto": {
@@ -53,7 +54,7 @@ SYMBOL_GROUP = {
     "GBP/USD": "forex", "USD/JPY": "forex", "USD/CAD": "forex",
     "NZD/CHF": "forex_cross", "AUD/CHF": "forex_cross",
     "NZD/JPY": "forex_cross", "NZD/CAD": "forex_cross", "CHF/JPY": "forex_cross",
-    "AUD/JPY": "forex_cross",
+    "AUD/JPY": "forex_cross", "GBP/JPY": "forex_cross",
     "BTC/USD": "crypto", "ETH/USD": "crypto",
     "XAU/USD": "metal",  "XAG/USD": "metal",
     "USTEC": "index", "US500": "index", "DE40": "index", "JP225": "index", "US30": "index",
@@ -75,6 +76,7 @@ PIP_CONFIG = {
     "NZD/CAD": {"pip_size": 0.0001, "pip_value": 7.0},
     "CHF/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
     "AUD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
+    "GBP/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
     "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
     "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},

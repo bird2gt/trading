@@ -2,6 +2,7 @@ import pandas as pd
 
 from .base import BaseStrategy
 from .breakout_adx import BreakoutAdx
+from ..mean_reversion import MeanReversion
 from .pair_profiles import (
     AudUsdSwing,
     EurChfMeanReversion,
@@ -13,6 +14,13 @@ from .pair_profiles import (
     UsdJpyDefensive,
 )
 from .take_profit import AdxMa
+
+
+def _mean_revert(engine):
+    """Tag a generic (non-forex) engine as mean-reverting so PairProfile/the
+    structure filter treat it like the revert forex pairs (buy dips/sell rallies)."""
+    engine.mean_reverting = True
+    return engine
 
 
 class Forex(BaseStrategy):
@@ -54,6 +62,13 @@ class Forex(BaseStrategy):
             "AUD/JPY": PairProfile(
                 "AUD/JPY TakeProfit ADX+MA",
                 AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
+            ),
+            # 2026-06-08: backtested over 12mo — MeanReversion best on GBP/JPY
+            # (PF 1.61/1.61, +$1691; the most volatile JPY cross trades range-y,
+            # unlike trend-following AUD/JPY — AdxMa/2B/Breakout all failed here).
+            "GBP/JPY": PairProfile(
+                "GBP/JPY Mean Reversion",
+                _mean_revert(MeanReversion(period=20, std_mult=2.0)),
             ),
         }
 

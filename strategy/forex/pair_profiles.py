@@ -10,7 +10,7 @@ class PairProfile(BaseStrategy):
     def __init__(self, name: str, engine: BaseStrategy):
         self.name = name
         self.engine = engine
-        self.mean_reverting = engine.mean_reverting
+        self.mean_reverting = getattr(engine, "mean_reverting", False)
 
     def generate_signal(self, df: pd.DataFrame, **kwargs) -> int:
         return self.engine.generate_signal(df, **kwargs)
