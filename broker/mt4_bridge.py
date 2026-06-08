@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import time
 from fastapi import FastAPI, Depends, Header, HTTPException
 from pydantic import BaseModel
 import csv
@@ -16,6 +17,7 @@ def _verify_token(authorization: str = Header(default="")):
 
 
 MT4_FILES_DIR = Path.home() / "Library/Application Support/net.metaquotes.wine.metatrader4/drive_c/Program Files (x86)/MetaTrader 4/MQL4/Files"
+MT4_FILE_STALE_SECONDS = int(os.environ.get("MT4_FILE_STALE_SECONDS", "30"))
 
 _signals: dict[str, dict] = {}
 
@@ -51,18 +53,66 @@ def list_signals():
     return _signals
 
 
+@app.get("/health")
+def health():
+    return {"ok": True, "service": "mt4_bridge"}
+
+
+@app.get("/ready")
+def ready():
+    balance = _read_balance()
+    checks = {
+        "balance": _file_check("balance.txt", require_float=True),
+        "positions": _file_check("positions.txt"),
+        "heartbeat": _file_check("mt4_heartbeat.txt", required=False),
+    }
+    required_ok = checks["balance"]["ok"] and checks["positions"]["ok"]
+    return {
+        "ok": required_ok,
+        "service": "mt4_bridge",
+        "balance": balance,
+        "mt4_file_stale_seconds": MT4_FILE_STALE_SECONDS,
+        "checks": checks,
+    }
+
+
 def write_signal(symbol: str, action: str, lots: float = 0.01, sl: float = 0.0, tp: float = 0.0):
     _signals[symbol] = {"symbol": symbol, "action": action, "lots": lots, "sl": sl, "tp": tp}
     _write_signal_file(symbol, action, lots, sl, tp)
 
 
+def _read_balance():
+    try:
+        return float((MT4_FILES_DIR / "balance.txt").read_text().strip())
+    except Exception:
+        return None
+
+
+def _file_check(filename: str, required: bool = True, require_float: bool = False) -> dict:
+    path = MT4_FILES_DIR / filename
+    if not path.exists():
+        return {"ok": not required, "exists": False, "required": required}
+    age_s = max(0.0, time.time() - path.stat().st_mtime)
+    fresh = age_s <= MT4_FILE_STALE_SECONDS
+    value_ok = True
+    if require_float:
+        try:
+            float(path.read_text().strip())
+        except Exception:
+            value_ok = False
+    return {
+        "ok": fresh and value_ok,
+        "exists": True,
+        "required": required,
+        "age_seconds": round(age_s, 1),
+        "fresh": fresh,
+        "value_ok": value_ok,
+    }
+
+
 @app.get("/balance")
 def get_balance():
-    path = MT4_FILES_DIR / "balance.txt"
-    try:
-        return {"balance": float(path.read_text().strip())}
-    except Exception:
-        return {"balance": None}
+    return {"balance": _read_balance()}
 
 
 @app.get("/account")

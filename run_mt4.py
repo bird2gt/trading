@@ -220,6 +220,21 @@ def _is_forex(symbol: str) -> bool:
     return SYMBOL_GROUP.get(symbol) in {"forex", "forex_cross"} and "/" in symbol
 
 
+def _is_mean_reverting(symbol: str) -> bool:
+    """True for symbols that trade counter-trend (buy dips / sell rallies).
+
+    This is NOT an engine property — it's a per-symbol decision from the
+    backtests (some pairs run a trend engine like AdxMa yet behave revert-y, so
+    they're tagged via `mean_reverting=True` in pair_profiles). It is the single
+    gate for every trend-following layer: the structure filter, the H1 MA early
+    exit and the fib TP1 are all skipped for these symbols, because each would
+    fight a counter-trend entry. The >1 ATR impulse exit still applies."""
+    return (
+        (symbol in FOREX_SYMBOLS and STRATEGY_FOREX.is_mean_reverting(symbol))
+        or symbol in INDEX_MEAN_REVERT
+    )
+
+
 def _currency_net(extra: tuple[str, str] | None = None) -> dict[str, int]:
     """Net exposure per currency from open forex positions (+1 base, -1 quote per
     BUY; flipped for SELL). `extra` optionally adds a hypothetical (symbol, action)."""
@@ -481,14 +496,12 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
             tp1 = tp_price
         else:
             tp1 = round(entry + tp_mult * atr, 5)
-    elif action == "SELL":
+    else:  # SELL — send_signal is only ever called with BUY/SELL
         sl  = round(entry + sl_mult * atr, 5)
         if tp_price is not None and tp_price < entry:
             tp1 = tp_price
         else:
             tp1 = round(entry - tp_mult * atr, 5)
-    else:
-        sl = tp1 = 0.0
 
     adjusted_lots = _calc_lots(entry, sl, td_symbol) * size_mult
     if adjusted_lots < MIN_LOTS:
@@ -592,6 +605,14 @@ def _check_early_exit(symbol: str, df_1h: pd.DataFrame) -> bool:
         if active == "BUY" and current < entry - 1.0 * atr:
             _send_close(symbol, f"impulse against BUY >1 ATR (entry={entry:.5f} atr={atr:.5f})")
             return True
+
+    # The MA5/20 cross is a trend-following exit: it reads "trend reversed" the
+    # moment the fast MA dips below the slow one. For a mean-revert entry that IS
+    # the thesis (you bought a dip / sold a rally), so it would close the trade on
+    # the next poll. Skip it for revert symbols — the impulse exit above still caps
+    # adverse moves. (Not modelled in the backtest, see backtest_2w / index tuners.)
+    if _is_mean_reverting(symbol):
+        return False
 
     close = df_1h["close"]
     fast_ma = close.rolling(STRATEGY.fast).mean().iloc[-1]
@@ -843,10 +864,7 @@ def trading_loop():
                 # market structure filter — trend-following gate; skip for
                 # mean-reverting forex engines (they buy dips / sell rallies, so
                 # blocking BUY in LH/LL kills their edge — see backtest 2026-06-05)
-                mean_reverting = (
-                    (symbol in FOREX_SYMBOLS and STRATEGY_FOREX.is_mean_reverting(symbol))
-                    or symbol in INDEX_MEAN_REVERT   # JP225/US30/US500 buy dips / sell rallies
-                )
+                mean_reverting = _is_mean_reverting(symbol)
                 if not in_news_window and not mean_reverting:
                     struct = market_structure(df_closed)
                     if signal == 1 and struct == -1:
@@ -856,7 +874,12 @@ def trading_loop():
                         print(f"{symbol}: SELL blocked — bullish structure (HH/HL)")
                         continue
                 if not in_news_window:
-                    tp_price = fib_tp(df_closed, signal, level=1.272) if asset_profile != "metal" else None
+                    # Fib 1.272 is a trend-continuation target (beyond the swing).
+                    # Mean-revert symbols target the mean, not an extension, so they
+                    # use the ATR TP1 from rules_for (matches the backtest); metals
+                    # already use ATR. send_signal falls back to tp_mult*ATR when None.
+                    use_fib = asset_profile != "metal" and not mean_reverting
+                    tp_price = fib_tp(df_closed, signal, level=1.272) if use_fib else None
 
                 # Fear & Greed filter — crypto only, trend-following mode
                 # backtest shows: buy in Greed(≥50)=69%win, Neutral=29%win → block neutral/fear longs

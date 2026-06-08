@@ -27,6 +27,9 @@ class EurUsdDefensive(PairProfile):
             "EUR/USD TakeProfit ADX+MA",
             AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
         )
+        # Runs a trend engine (AdxMa) but is flagged revert deliberately: the LH/LL
+        # structure filter hurt it in backtest (structure_filter_revert_fix,
+        # 2026-06-05). The flag = "skip trend-following gates", not engine type.
         self.mean_reverting = True
 
 
@@ -79,4 +82,6 @@ class UsdCadBreakout(PairProfile):
             "USD/CAD TakeProfit ADX+MA",
             AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
         )
+        # Same as EUR/USD: AdxMa engine, but flagged revert to skip the trend
+        # filters that hurt it in backtest (structure_filter_revert_fix, 2026-06-05).
         self.mean_reverting = True
