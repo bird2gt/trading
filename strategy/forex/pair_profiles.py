@@ -10,6 +10,7 @@ class PairProfile(BaseStrategy):
     def __init__(self, name: str, engine: BaseStrategy):
         self.name = name
         self.engine = engine
+        self.mean_reverting = engine.mean_reverting
 
     def generate_signal(self, df: pd.DataFrame, **kwargs) -> int:
         return self.engine.generate_signal(df, **kwargs)
@@ -26,6 +27,7 @@ class EurUsdDefensive(PairProfile):
             "EUR/USD TakeProfit ADX+MA",
             AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
         )
+        self.mean_reverting = True
 
 
 class GbpUsdSwing(PairProfile):
@@ -68,6 +70,7 @@ class EurChfMeanReversion(PairProfile):
             "EUR/CHF Mean Reversion ZScore",
             ZScoreAdx(z_period=20, z_entry=2.0, adx_period=14, adx_threshold=25.0, z_signal_period=3),
         )
+        self.mean_reverting = True
 
 
 class UsdCadBreakout(PairProfile):
@@ -76,3 +79,4 @@ class UsdCadBreakout(PairProfile):
             "USD/CAD TakeProfit ADX+MA",
             AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
         )
+        self.mean_reverting = True
