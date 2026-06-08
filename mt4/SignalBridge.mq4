@@ -12,6 +12,7 @@ input double BreakevenATRMult    = 1.0;   // move SL to entry after X ATR profit
 input int    ChandelierATRPeriod = 14;
 input double ChandelierATRMult   = 2.0;   // SL = highest_high - X*ATR
 
+string   BridgeVersion = "2026-06-09-partialclose-fix";
 string   lastAction   = "NONE";
 int      pipFactor    = 1;
 datetime s_lastBarTime = 0;
@@ -34,6 +35,7 @@ void OnTimer() {
     WriteBalance();
     WritePositions();
     WriteTrades();
+    WriteHeartbeat();
 }
 
 void OnTick() {}
@@ -57,7 +59,13 @@ void ReadSignal() {
     double lots   = (n > 1) ? StringToDouble(parts[1]) : LotSize;
     double sl     = (n > 2) ? StringToDouble(parts[2]) : 0.0;
     double tp1    = (n > 3) ? StringToDouble(parts[3]) : 0.0;
-    if (lots <= 0) lots = LotSize;
+
+    if (action == "NONE") {
+        if (CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0)
+            _resetChandelier();
+        lastAction = "NONE";
+        return;
+    }
 
     // CLOSE must retry until flat — don't let the lastAction guard suppress it
     // (e.g. an OrderClose rejected near market close would otherwise never retry)
@@ -67,11 +75,19 @@ void ReadSignal() {
             _resetChandelier();
             Print("Signal applied: CLOSE");
         }
-        lastAction = action;
+        if (CountOrders(OP_BUY) == 0 && CountOrders(OP_SELL) == 0)
+            lastAction = "NONE";
+        else
+            lastAction = action;
         return;
     }
 
     if (action == lastAction) return;
+
+    if (lots <= 0) {
+        Print("Signal ignored: invalid lots in file for ", action);
+        return;
+    }
 
     // Risk is owned by Python: use the file's SL, TP and lot verbatim (single source of
     // truth, matches the backtest). The EA only clamps lots to the broker's volume limits.
@@ -85,12 +101,20 @@ void ReadSignal() {
 
     if (action == "BUY") {
         CloseAll(OP_SELL);
+        if (CountOrders(OP_SELL) > 0) {
+            Print("Signal delayed: SELL positions still open, BUY not opened");
+            return;
+        }
         if (CountOrders(OP_BUY) == 0) {
             _resetChandelier();
             opened = OpenOrder(OP_BUY, lot_n, sl_n, tp1);
         }
     } else if (action == "SELL") {
         CloseAll(OP_BUY);
+        if (CountOrders(OP_BUY) > 0) {
+            Print("Signal delayed: BUY positions still open, SELL not opened");
+            return;
+        }
         if (CountOrders(OP_SELL) == 0) {
             _resetChandelier();
             opened = OpenOrder(OP_SELL, lot_n, sl_n, tp1);
@@ -110,7 +134,10 @@ void PartialClose() {
     for (int i = OrdersTotal() - 1; i >= 0; i--) {
         if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
         if (OrderSymbol() != Symbol()) continue;
-        if (StringFind(OrderComment(), "SB_partial") >= 0) continue;
+        // Skip a partial remnant: TP==0 marks one we already cut (the primary
+        // guard); "from #" catches MT4's remnant comment in case the TP-clear
+        // below was rejected, so we never cut the same position twice.
+        if (StringFind(OrderComment(), "from #") >= 0) continue;
 
         double tp = OrderTakeProfit();
         if (tp == 0) continue;
@@ -124,10 +151,22 @@ void PartialClose() {
 
         double price = (OrderType() == OP_BUY) ? Bid : Ask;
         if (OrderClose(OrderTicket(), halfLots, price, Slippage, clrGold)) {
-            if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-                OrderModify(OrderTicket(), OrderOpenPrice(), OrderStopLoss(), 0, 0, clrYellow);
+            _clearTakeProfit();
             Print("Partial close 50% at TP1=", tp, " — chandelier takes over");
         }
+    }
+}
+
+
+// Zero the TP on the symbol's remaining order so the chandelier (which only acts
+// on TP==0 orders) takes over. Search by symbol: a partial close can change the
+// ticket and shift positions, so re-selecting the old position index is unsafe.
+void _clearTakeProfit() {
+    for (int i = OrdersTotal() - 1; i >= 0; i--) {
+        if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+        if (OrderSymbol() != Symbol()) continue;
+        if (OrderTakeProfit() == 0) continue;
+        OrderModify(OrderTicket(), OrderOpenPrice(), OrderStopLoss(), 0, 0, clrYellow);
     }
 }
 
@@ -228,6 +267,20 @@ void WritePositions() {
         FileWriteString(fh, OrderSymbol() + "," + type + "," +
                         DoubleToString(OrderOpenPrice(), 5) + "\n");
     }
+    FileClose(fh);
+}
+
+
+// ── heartbeat writer ─────────────────────────────────────────────────────────
+
+void WriteHeartbeat() {
+    int fh = FileOpen("mt4_heartbeat.txt", FILE_WRITE | FILE_TXT | FILE_ANSI);
+    if (fh == INVALID_HANDLE) return;
+    FileWriteString(fh,
+        "version=" + BridgeVersion + "\n" +
+        "symbol="  + Symbol() + "\n" +
+        "time="    + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + "\n"
+    );
     FileClose(fh);
 }
 

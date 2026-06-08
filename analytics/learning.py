@@ -44,6 +44,7 @@ MT4_SYMBOL_ALIASES = {
     "DE40": "DE40",
     "JP225CASH": "JP225",
     "JP225": "JP225",
+    "USTECHCASH": "USTEC",
     "USTECCASH": "USTEC",
     "USTEC": "USTEC",
     "BRENT": "BRENT",
