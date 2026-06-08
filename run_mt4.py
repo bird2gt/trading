@@ -568,11 +568,15 @@ def _maybe_send_subscription_reminder() -> None:
     print("Subscription reminder sent → Telegram")
 
 
-# Oil geo-risk news window: the economic calendar can't see a Middle-East/OPEC
-# supply shock, so the morning digest arms a daily flag and the bot only opens
-# the breakout window once price confirms it with a ≥3σ 15m move.
+# Oil geo-risk: the economic calendar can't see a Middle-East/OPEC supply shock,
+# so the morning digest arms a daily flag. ALERT-ONLY — backtest showed the
+# momentum breakout on a >=3σ crude impulse has no edge (WR~50%, PF<1 on every
+# threshold over 10 weeks), so the channel no longer opens a trade window; it
+# just pings Telegram so the move can be traded by hand. See oil_geo_news_window.
 _OIL_GEO_SYMBOLS = {"BRENT", "WTI"}
 GEO_Z_MIN = 3.0
+_oil_geo_alerted: set[str] = set()   # symbols already pinged today (date-scoped)
+_oil_geo_alert_day: date | None = None
 
 
 def _oil_geo_flag_active() -> bool:
@@ -588,29 +592,48 @@ def _oil_geo_flag_active() -> bool:
         return False
 
 
-def is_oil_geo_active(symbol: str) -> tuple[bool, str]:
-    """(True, event) when the oil-geo flag is armed AND oil is actually moving
-    (≥GEO_Z_MIN sigmas over the last ~45m). Mirrors is_high_impact_active's
-    shape so it can slot into the news_windows map."""
+def _send_telegram(text: str) -> None:
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10,
+        ).raise_for_status()
+    except Exception as e:
+        print(f"[WARN] telegram send failed: {e}")
+
+
+def check_oil_geo_alert(symbol: str) -> None:
+    """Alert-only: when the geo flag is armed AND crude is actually moving
+    (>=GEO_Z_MIN sigmas over ~45m), ping Telegram once per symbol per day so the
+    move can be handled manually. Does NOT open a trade window (no proven edge)."""
+    global _oil_geo_alert_day
     if symbol not in _OIL_GEO_SYMBOLS or not _oil_geo_flag_active():
-        return False, ""
+        return
+    today = _utc_today()
+    if _oil_geo_alert_day != today:
+        _oil_geo_alert_day = today
+        _oil_geo_alerted.clear()
+    if symbol in _oil_geo_alerted:
+        return
     try:
         df15 = fetch_ohlcv(symbol, outputsize=200, interval="15min")
     except Exception as e:
         print(f"{symbol}: oil-geo move check skipped — 15m data unavailable: {e}")
-        return False, ""
+        return
     z = latest_move_z(df15)
-    if z is not None and abs(z) >= GEO_Z_MIN:
-        return True, f"oil geo-risk ({z:+.1f}σ)"
-    return False, ""
-
-
-def _news_window_for(symbol: str) -> tuple[bool, str]:
-    """Calendar-driven news window, plus the oil geo-risk window for crude."""
-    active, event = is_high_impact_active(symbol)
-    if active:
-        return active, event
-    return is_oil_geo_active(symbol)
+    if z is None or abs(z) < GEO_Z_MIN:
+        return
+    _oil_geo_alerted.add(symbol)
+    direction = "вверх" if z > 0 else "вниз"
+    msg = (f"🛢️ {symbol}: гео-движение {direction} ({z:+.1f}σ) при активном "
+           f"oil-geo флаге. Авто-входа нет — посмотри руками.")
+    print(f"{symbol}: oil-geo alert ({z:+.1f}σ) → Telegram")
+    _send_telegram(msg)
 
 
 def _run_learning_report() -> None:
@@ -657,7 +680,7 @@ def trading_loop():
         drawdown_hit = _daily_drawdown_hit()
         symbols = list(ALWAYS_SYMBOLS) if weekend else _active_symbols()
         news_windows = {
-            symbol: _news_window_for(symbol)
+            symbol: is_high_impact_active(symbol)
             for symbol in symbols
         }
         in_news_cycle = any(active for active, _ in news_windows.values())
@@ -668,6 +691,8 @@ def trading_loop():
             try:
                 asset_profile = SYMBOL_GROUP.get(symbol)
                 in_news_window, news_event = news_windows.get(symbol, (False, ""))
+
+                check_oil_geo_alert(symbol)   # alert-only, no trade window
 
                 if _active_signals.get(symbol) in ("BUY", "SELL"):
                     try:
