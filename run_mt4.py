@@ -17,6 +17,8 @@ from strategy.breakout import Breakout as NewsBreakout
 from strategy.crypto import Crypto
 from strategy.forex import Forex
 from strategy.forex.breakout_adx import BreakoutAdx
+from strategy.mean_reversion import MeanReversion
+from strategy.rsi_mean_revert import RSIMeanRevert
 from strategy.metals import MetalsSession
 from strategy.structure import market_structure, fib_tp
 from analytics.sentiment import analyze_sentiment
@@ -47,12 +49,15 @@ from config.profiles import SYMBOL_GROUP, PIP_CONFIG, MIN_LOTS, MAX_LOTS, rules_
 # Sessions (UTC): Asian 22:00-08:00, London 08:00-12:30, US 12:30-21:00
 ALWAYS_SYMBOLS = ["BTC/USD", "ETH/USD"]
 MAJOR_SYMBOLS  = ["EUR/USD", "GBP/USD", "USD/CHF", "EUR/CHF", "USD/CAD", "AUD/USD", "USD/JPY"]
-ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY"]
+ASIAN_SYMBOLS  = ["XAU/USD", "XAG/USD", "JP225", "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY"]
 LONDON_SYMBOLS = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "DE40",
-                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY"] + MAJOR_SYMBOLS
-US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500"] + MAJOR_SYMBOLS
+                  "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY"] + MAJOR_SYMBOLS
+US_SYMBOLS     = ["XAU/USD", "XAG/USD", "BRENT", "WTI", "USTEC", "US500", "US30"] + MAJOR_SYMBOLS
 POLL_INTERVAL      = 300  # 5 minutes default
 POLL_INTERVAL_NEWS = 60   # 1 minute during US session (12:00–16:00 UTC = 15:00–19:00 Kyiv)
+SIGNAL_CONFIRM_TIMEOUT = 20
+SIGNAL_CONFIRM_POLL = 2
+FAILED_SIGNAL_COOLDOWN = 3600
 # Friday: flatten all positions before the weekend close (forex closes ~21:00 UTC)
 WEEKEND_FLAT_HOUR = 20
 WEEKEND_FLAT_MIN  = 30
@@ -80,11 +85,19 @@ STRATEGY_CRYPTO = Crypto(period=20, adx_period=14, adx_threshold=25.0,
 STRATEGY_METALS_XAU = MetalsSession("XAUUSD")
 STRATEGY_METALS_XAG = MetalsSession("XAGUSD")
 STRATEGY_INDEX = BreakoutAdx(period=20, adx_period=14, adx_threshold=22.0, adx_rising_bars=3)
+# Per-index engines: indices are range-y (efficiency ~0.2), so mean-revert beats
+# breakout on JP225/US30/US500 (backtest 2026-06-08). USTEC/DE40 stay on Breakout.
+INDEX_ENGINES = {
+    "JP225": MeanReversion(period=20, std_mult=2.0),                    # PF 1.99/2.14
+    "US30":  RSIMeanRevert(period=14, oversold=30, overbought=70),      # PF 1.79/2.20
+    "US500": RSIMeanRevert(period=14, oversold=25, overbought=75),      # PF 1.75/2.13 (was Breakout)
+}
+INDEX_MEAN_REVERT = set(INDEX_ENGINES)   # these skip the trend-structure filter
 STRATEGY_ENERGY = BreakoutAdx(period=20, adx_period=14, adx_threshold=25.0, adx_rising_bars=3)
 BREAKOUT_STRATEGY = NewsBreakout(period=8)     # 8 × 15min = 2h pre-news range
 
 FOREX_SYMBOLS = {
-    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY",
+    "NZD/CHF", "AUD/CHF", "NZD/JPY", "NZD/CAD", "CHF/JPY", "AUD/JPY",
     *MAJOR_SYMBOLS,   # majors restored alongside the intraday set — same Forex profile strategy
 }
 
@@ -98,10 +111,12 @@ MT4_SYMBOL_MAP = {
     "NZD/JPY": "NZDJPY",
     "NZD/CAD": "NZDCAD",
     "CHF/JPY": "CHFJPY",
+    "AUD/JPY": "AUDJPY",
     "BRENT": "BRENT",
     "WTI": "WTI",
     "USTEC": ".USTECHCash",   # RoboForex prefixes index CFDs with a dot
     "US500": ".US500Cash",
+    "US30": ".US30Cash",
     "DE40": ".DE40Cash",
     "JP225": ".JP225Cash",
 }
@@ -116,7 +131,7 @@ CURRENCY_EXPOSURE_CAP = 2  # max net positions per currency (e.g. EUR/USD + EUR/
 CORR_GROUPS = [
     {"XAU/USD", "XAG/USD"},        # положительная корреляция: блокировать одинаковые действия
     {"BRENT", "WTI"},               # нефть: один и тот же драйвер
-    {"USTEC", "US500"},             # US indices: не дублировать один и тот же риск-on/off
+    {"USTEC", "US500", "US30"},     # US indices: не дублировать один и тот же риск-on/off
 ]
 _MT4_TO_PY = {mt4: py for py, mt4 in MT4_SYMBOL_MAP.items()}
 _MT4_TO_PY.update({s.replace("/", ""): s for s in SYMBOL_GROUP})
@@ -128,6 +143,7 @@ _last_digest_date: date | None = None
 _last_calendar_date: date | None = None
 _last_journal_sync: float = 0.0
 _last_learning_run: float = 0.0
+_signal_cooldown_until: dict[str, float] = {}
 
 
 def _active_symbols() -> list[str]:
@@ -183,8 +199,8 @@ def _daily_drawdown_hit() -> bool:
     try:
         balance = _get_balance()
     except RuntimeError as e:
-        print(f"[WARN] drawdown check skipped: {e}")
-        return False
+        print(f"[SAFE] drawdown check failed — new entries blocked: {e}")
+        return True
     if not _load_day_start(today):
         _day_start["date"] = today
         _day_start["balance"] = balance
@@ -239,6 +255,7 @@ def _correlated_conflict(symbol: str, action: str) -> bool:
 def _get_balance() -> float:
     try:
         resp = _bridge_session.get(f"{BRIDGE_URL}/balance", timeout=3)
+        resp.raise_for_status()
         bal = resp.json().get("balance")
     except Exception as e:
         raise RuntimeError(f"balance unavailable: {e}") from e
@@ -251,12 +268,47 @@ def _mt4_symbol(symbol: str) -> str:
     return MT4_SYMBOL_MAP.get(symbol, symbol.replace("/", ""))
 
 
+def _positions_snapshot() -> list[dict]:
+    resp = _bridge_session.get(f"{BRIDGE_URL}/positions", timeout=3)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _position_live(symbol: str, action: str) -> bool:
+    mt4_symbol = _mt4_symbol(symbol)
+    for pos in _positions_snapshot():
+        raw = pos.get("symbol", "")
+        py_symbol = _MT4_TO_PY.get(raw, raw)
+        if raw == mt4_symbol or py_symbol == symbol:
+            return pos.get("action") == action
+    return False
+
+
+def _confirm_signal_live(symbol: str, action: str, timeout_s: int = SIGNAL_CONFIRM_TIMEOUT) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        time.sleep(SIGNAL_CONFIRM_POLL)
+        try:
+            if _position_live(symbol, action):
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _forex_pip_value_usd(symbol: str, entry: float) -> float:
     base, quote = symbol.split("/")
     if quote == "USD":
         return 10.0
     if quote == "JPY":
-        return 1000.0 / entry
+        if base == "USD":
+            usdjpy = entry
+        else:
+            try:
+                usdjpy = fetch_ohlcv("USD/JPY", outputsize=1, interval="1h")["close"].iloc[-1]
+            except Exception:
+                raise RuntimeError(f"Could not fetch USD/JPY rate for {symbol} lot calculation")
+        return 1000.0 / usdjpy
     if quote == "CHF":
         try:
             usdchf = fetch_ohlcv("USD/CHF", outputsize=1, interval="1h")["close"].iloc[-1]
@@ -437,7 +489,11 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
     else:
         sl = tp1 = 0.0
 
-    base_lots = round(_calc_lots(entry, sl, td_symbol) * size_mult, 2)
+    adjusted_lots = _calc_lots(entry, sl, td_symbol) * size_mult
+    if adjusted_lots < MIN_LOTS:
+        print(f"{td_symbol}: {action} blocked — adjusted lots {adjusted_lots:.4f} below minimum {MIN_LOTS:.2f}")
+        return False
+    base_lots = round(adjusted_lots, 2)
     size_note = f" [×{size_mult} sentiment]" if size_mult != 1.0 else ""
 
     try:
@@ -448,11 +504,35 @@ def send_signal(td_symbol: str, action: str, df: pd.DataFrame, size_mult: float 
         resp.raise_for_status()
     except Exception as e:
         print(f"[ERROR] signal POST failed for {td_symbol}: {e}")
-        return
+        return False
     _active_signals[td_symbol] = action
     _entry_prices[td_symbol] = entry
     tp_note = " [fib]" if tp_price is not None and tp1 == tp_price else ""
     print(f"{td_symbol}: {action} | lots={base_lots}{size_note} | SL={sl:.5f} TP={tp1:.5f}{tp_note}")
+    if action in ("BUY", "SELL") and not _confirm_signal_live(td_symbol, action):
+        _active_signals.pop(td_symbol, None)
+        _entry_prices.pop(td_symbol, None)
+        _signal_cooldown_until[td_symbol] = time.time() + FAILED_SIGNAL_COOLDOWN
+        _send_none_signal(td_symbol, "entry not confirmed by MT4 positions")
+        print(f"{td_symbol}: {action} not confirmed — cooldown {FAILED_SIGNAL_COOLDOWN // 60}m")
+        return False
+    return True
+
+
+def _send_none_signal(symbol: str, reason: str = "") -> bool:
+    mt4_symbol = _mt4_symbol(symbol)
+    try:
+        resp = _bridge_session.post(f"{BRIDGE_URL}/signal", json={
+            "symbol": mt4_symbol, "action": "NONE",
+            "lots": 0.01, "sl": 0.0, "tp": 0.0,
+        }, timeout=3)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"{symbol}: failed to clear signal file — {e}")
+        return False
+    if reason:
+        print(f"{symbol}: signal file cleared — {reason}")
+    return True
 
 
 def _send_close(symbol: str, reason: str):
@@ -667,7 +747,7 @@ def trading_loop():
 
         _maybe_send_subscription_reminder()
 
-        _load_active_signals()
+        position_sync_ok = _load_active_signals()
 
         weekend = _weekend_flat_now()
         if weekend:
@@ -678,6 +758,9 @@ def trading_loop():
             _close_all_positions("weekend flat — forex/metals closed", exclude=set(ALWAYS_SYMBOLS))
 
         drawdown_hit = _daily_drawdown_hit()
+        if not position_sync_ok:
+            drawdown_hit = True
+            print("[SAFE] position reconciliation unavailable — new entries blocked")
         symbols = list(ALWAYS_SYMBOLS) if weekend else _active_symbols()
         news_windows = {
             symbol: is_high_impact_active(symbol)
@@ -714,6 +797,12 @@ def trading_loop():
                 if drawdown_hit:
                     continue
 
+                cooldown_until = _signal_cooldown_until.get(symbol, 0.0)
+                if time.time() < cooldown_until:
+                    remain_min = int((cooldown_until - time.time()) // 60) + 1
+                    print(f"{symbol}: skipped — execution cooldown {remain_min}m")
+                    continue
+
                 if in_news_window:
                     print(f"{symbol}: news breakout window — {news_event}")
                     df_signal = fetch_ohlcv(symbol, outputsize=20, interval="15min")
@@ -736,7 +825,7 @@ def trading_loop():
                         else:
                             signal = STRATEGY_METALS_XAU.generate_signal(df_closed)
                     elif asset_profile == "index":
-                        signal = STRATEGY_INDEX.generate_signal(df_closed)
+                        signal = INDEX_ENGINES.get(symbol, STRATEGY_INDEX).generate_signal(df_closed)
                     elif asset_profile == "energy":
                         signal = STRATEGY_ENERGY.generate_signal(df_closed)
                     else:
@@ -753,7 +842,10 @@ def trading_loop():
                 # market structure filter — trend-following gate; skip for
                 # mean-reverting forex engines (they buy dips / sell rallies, so
                 # blocking BUY in LH/LL kills their edge — see backtest 2026-06-05)
-                mean_reverting = symbol in FOREX_SYMBOLS and STRATEGY_FOREX.is_mean_reverting(symbol)
+                mean_reverting = (
+                    (symbol in FOREX_SYMBOLS and STRATEGY_FOREX.is_mean_reverting(symbol))
+                    or symbol in INDEX_MEAN_REVERT   # JP225/US30/US500 buy dips / sell rallies
+                )
                 if not in_news_window and not mean_reverting:
                     struct = market_structure(df_closed)
                     if signal == 1 and struct == -1:
@@ -838,14 +930,14 @@ def trading_loop():
         time.sleep(interval)
 
 
-def _load_active_signals():
+def _load_active_signals() -> bool:
     try:
         resp = _bridge_session.get(f"{BRIDGE_URL}/positions", timeout=3)
         resp.raise_for_status()
         positions = resp.json()
     except Exception as e:
         print(f"[WARN] position reconciliation failed: {e}")
-        return
+        return False
 
     live_signals: dict[str, str] = {}
     live_entries: dict[str, float] = {}
@@ -863,6 +955,10 @@ def _load_active_signals():
         for symbol, action in _active_signals.items()
         if action in ("BUY", "SELL") and symbol not in live_signals
     }
+    for symbol, action in stale.items():
+        _send_none_signal(symbol, f"stale {action} no longer live")
+    for symbol in live_signals:
+        _signal_cooldown_until.pop(symbol, None)
 
     _active_signals.clear()
     _active_signals.update(live_signals)
@@ -872,19 +968,13 @@ def _load_active_signals():
     if live_signals or stale:
         stale_note = f"; cleared stale={stale}" if stale else ""
         print(f"Reconciled {len(live_signals)} open positions: {live_signals}{stale_note}")
+    return True
 
 
 def _clear_signal_files():
     all_symbols = list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS))
     for symbol in all_symbols:
-        mt4_symbol = _mt4_symbol(symbol)
-        try:
-            _bridge_session.post(f"{BRIDGE_URL}/signal", json={
-                "symbol": mt4_symbol, "action": "NONE",
-                "lots": 0.01, "sl": 0.0, "tp": 0.0,
-            }, timeout=3)
-        except Exception:
-            pass
+        _send_none_signal(symbol)
     print("Signal files cleared")
 
 
@@ -907,6 +997,7 @@ def _data_check():
                 print(f"  {symbol} {interval}: FAIL — {e}")
                 ok = False
     print(f"--- data check {'OK' if ok else 'FAILED'} ---")
+    return ok
 
 
 def _port_in_use(host: str = "127.0.0.1", port: int = 8000) -> bool:
@@ -924,8 +1015,10 @@ def main():
     print("Symbols:", list(dict.fromkeys(ALWAYS_SYMBOLS + ASIAN_SYMBOLS + LONDON_SYMBOLS + US_SYMBOLS)))
     time.sleep(1)  # wait for server to start
     _clear_signal_files()
-    _data_check()
-    _load_active_signals()
+    if not _data_check():
+        _send_telegram("⚠️ Trading bot data check FAILED. Stale symbols will be blocked by per-symbol fetch guards.")
+    if not _load_active_signals():
+        print("[SAFE] startup position reconciliation failed — trading loop will block new entries until it recovers")
     journal_sync()
     journal_stats()
     _run_learning_report()

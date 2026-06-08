@@ -24,6 +24,14 @@ SYMBOL_MAP_YAHOO = {
     "NZD/JPY": "NZDJPY=X",
     "NZD/CAD": "NZDCAD=X",
     "CHF/JPY": "CHFJPY=X",
+    "EUR/GBP": "EURGBP=X",
+    "EUR/JPY": "EURJPY=X",
+    "GBP/JPY": "GBPJPY=X",
+    "AUD/JPY": "AUDJPY=X",
+    "CAD/JPY": "CADJPY=X",
+    "GBP/CHF": "GBPCHF=X",
+    "EUR/AUD": "EURAUD=X",
+    "AUD/NZD": "AUDNZD=X",
     "BTC/USD": "BTC-USD",
     "ETH/USD": "ETH-USD",
     "XAU/USD": "GC=F",
@@ -36,6 +44,12 @@ SYMBOL_MAP_YAHOO = {
     "US500": "^GSPC",
     "DE40": "^GDAXI",
     "JP225": "^N225",
+    "US30": "^DJI",
+    "UK100": "^FTSE",
+    "EU50": "^STOXX50E",
+    "FRA40": "^FCHI",
+    "HK50": "^HSI",
+    "AUS200": "^AXJO",
     ".USTEC": "^NDX",
     ".US500": "^GSPC",
     ".DE40C": "^GDAXI",
@@ -68,6 +82,14 @@ _ALPHA_FX_MAP = {
     "AUD/CHF": ("AUD", "CHF"),
     "NZD/JPY": ("NZD", "JPY"),
     "NZD/CAD": ("NZD", "CAD"),
+    "EUR/GBP": ("EUR", "GBP"),
+    "EUR/JPY": ("EUR", "JPY"),
+    "GBP/JPY": ("GBP", "JPY"),
+    "AUD/JPY": ("AUD", "JPY"),
+    "CAD/JPY": ("CAD", "JPY"),
+    "GBP/CHF": ("GBP", "CHF"),
+    "EUR/AUD": ("EUR", "AUD"),
+    "AUD/NZD": ("AUD", "NZD"),
     "XAU/USD": ("XAU", "USD"),
     "XAG/USD": ("XAG", "USD"),
 }
@@ -137,6 +159,14 @@ _POLYGON_MAP = {
     "AUD/CHF":  "C:AUDCHF",
     "NZD/JPY":  "C:NZDJPY",
     "NZD/CAD":  "C:NZDCAD",
+    "EUR/GBP":  "C:EURGBP",
+    "EUR/JPY":  "C:EURJPY",
+    "GBP/JPY":  "C:GBPJPY",
+    "AUD/JPY":  "C:AUDJPY",
+    "CAD/JPY":  "C:CADJPY",
+    "GBP/CHF":  "C:GBPCHF",
+    "EUR/AUD":  "C:EURAUD",
+    "AUD/NZD":  "C:AUDNZD",
     "XAU/USD":  "C:XAUUSD",
     "XAG/USD":  "C:XAGUSD",
     "BTC/USD":  "X:BTCUSD",
@@ -168,6 +198,14 @@ _STOOQ_MAP = {
     "AUD/CHF": "audchf",
     "NZD/JPY": "nzdjpy",
     "NZD/CAD": "nzdcad",
+    "EUR/GBP": "eurgbp",
+    "EUR/JPY": "eurjpy",
+    "GBP/JPY": "gbpjpy",
+    "AUD/JPY": "audjpy",
+    "CAD/JPY": "cadjpy",
+    "GBP/CHF": "gbpchf",
+    "EUR/AUD": "euraud",
+    "AUD/NZD": "audnzd",
     "XAU/USD": "xauusd",
     "XAG/USD": "xagusd",
     "BTC/USD": "btcusd",
@@ -353,7 +391,8 @@ def _fetch_yahoo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
                          interval=yf_interval, auto_adjust=True, progress=False)
         df = _clean(df)
 
-    _yahoo_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _yahoo_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -391,7 +430,8 @@ def _fetch_twelve(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df = df.drop(columns=["datetime"])
     df = df.astype(float).sort_index()
 
-    _twelve_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _twelve_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -443,7 +483,8 @@ def _fetch_alpha(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if interval == "4h":
         df = _resample_4h(df)
 
-    _alpha_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _alpha_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -484,7 +525,8 @@ def _fetch_finage(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
             "close": "last", "volume": "sum",
         }).dropna()
 
-    _finage_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _finage_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -606,7 +648,8 @@ def _fetch_binance(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     df.index = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(None)
     df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
 
-    _binance_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _binance_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -666,7 +709,8 @@ def _fetch_tiingo(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df[["open", "high", "low", "close", "volume"]].astype(float).sort_index()
-    _tiingo_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _tiingo_cache[cache_key] = (df, time.time())
     return df
 
 
@@ -717,7 +761,8 @@ def _fetch_polygon(symbol: str, interval: str, outputsize: int) -> pd.DataFrame:
     if interval == "4h":
         df = _resample_4h(df)
 
-    _polygon_cache[cache_key] = (df, time.time())
+    if not df.empty:
+        _polygon_cache[cache_key] = (df, time.time())
     return df
 
 

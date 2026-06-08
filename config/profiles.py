@@ -20,6 +20,7 @@ PROFILES = {
             "AUD/CHF": {"adx_threshold": 25.0},
             "NZD/JPY": {"adx_threshold": 23.0},
             "NZD/CAD": {"adx_threshold": 25.0},
+            "AUD/JPY": {"adx_threshold": 20.0},   # AdxMa engine (PF 1.78/12mo backtest 2026-06-08)
         },
     },
     "crypto": {
@@ -35,7 +36,10 @@ PROFILES = {
     "index": {
         "risk_pct": 0.005, "sl_mult": 1.2, "tp_mult": 1.8,
         "symbols": {
-            "JP225": {"sl_mult": 1.5, "tp_mult": 2.0},
+            # mean-revert engines (backtest 2026-06-08) — per-index R:R
+            "JP225": {"sl_mult": 1.2, "tp_mult": 1.8},   # MeanReversion 20/2.0, PF 1.99/2.14
+            "US30":  {"sl_mult": 1.0, "tp_mult": 2.0},   # RSI 14 30/70, PF 1.79/2.20
+            "US500": {"sl_mult": 1.2, "tp_mult": 1.8},   # RSI 14 25/75 (was Breakout), PF 1.75/2.13
         },
     },
     "energy": {
@@ -49,9 +53,10 @@ SYMBOL_GROUP = {
     "GBP/USD": "forex", "USD/JPY": "forex", "USD/CAD": "forex",
     "NZD/CHF": "forex_cross", "AUD/CHF": "forex_cross",
     "NZD/JPY": "forex_cross", "NZD/CAD": "forex_cross", "CHF/JPY": "forex_cross",
+    "AUD/JPY": "forex_cross",
     "BTC/USD": "crypto", "ETH/USD": "crypto",
     "XAU/USD": "metal",  "XAG/USD": "metal",
-    "USTEC": "index", "US500": "index", "DE40": "index", "JP225": "index",
+    "USTEC": "index", "US500": "index", "DE40": "index", "JP225": "index", "US30": "index",
     "BRENT": "energy", "WTI": "energy",
 }
 
@@ -69,6 +74,7 @@ PIP_CONFIG = {
     "NZD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
     "NZD/CAD": {"pip_size": 0.0001, "pip_value": 7.0},
     "CHF/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
+    "AUD/JPY": {"pip_size": 0.01,   "pip_value": 7.0},
     "BTC/USD": {"pip_size": 1.0,    "pip_value": 1.0},
     "ETH/USD": {"pip_size": 0.1,    "pip_value": 1.0},
     "XAU/USD": {"pip_size": 0.01,   "pip_value": 1.0},
@@ -77,6 +83,7 @@ PIP_CONFIG = {
     "US500": {"pip_size": 1.0, "pip_value": 1.0},
     "DE40": {"pip_size": 1.0, "pip_value": 1.0},
     "JP225": {"pip_size": 1.0, "pip_value": 1.0},
+    "US30": {"pip_size": 1.0, "pip_value": 1.0},
     "BRENT": {"pip_size": 0.01, "pip_value": 10.0},
     "WTI": {"pip_size": 0.01, "pip_value": 10.0},
 }

@@ -49,6 +49,12 @@ class Forex(BaseStrategy):
                 "CHF/JPY TakeProfit ADX+MA",
                 AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
             ),
+            # 2026-06-08: backtested over 12mo — AdxMa best on AUD/JPY (PF 1.78/1.56,
+            # +$3052; trend pair, real volatility unlike the low-vol forex candidates).
+            "AUD/JPY": PairProfile(
+                "AUD/JPY TakeProfit ADX+MA",
+                AdxMa(ma_period=21, adx_period=14, adx_threshold=20.0),
+            ),
         }
 
     def generate_signal(self, df: pd.DataFrame, **kwargs) -> int:
