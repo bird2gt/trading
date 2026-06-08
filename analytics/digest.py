@@ -251,6 +251,7 @@ def run_digest() -> None:
             messages=[{"role": "user", "content": f"Сегодняшние макро/политические посты:\n\n{text}\n\nОтвечай только на русском языке."}],
         )
         sections.append(f"## Макро и политический контекст\n\n{resp.content[0].text.strip()}")
+        _write_oil_geo_flag(today, _detect_oil_geo_risk(client, text))
 
     # Prepend economic calendar
     calendar_text = get_today_events(min_impact="Medium")
@@ -334,6 +335,37 @@ def _extract_bias(sections: list[str]) -> dict[str, tuple[int, str]]:
             biases[head.group(1)] = (-1, "PARAMETERS")
         # нейтральный → skip (символ не в файле, торгуем штатно)
     return biases
+
+
+def _detect_oil_geo_risk(client, macro_text: str) -> bool:
+    """True if today's macro posts describe a geopolitical oil-supply shock
+    (Middle East escalation, OPEC supply cut, sanctions, blockade) — the kind
+    of driver the economic-calendar gate can never see. Single yes/no call so
+    the answer doesn't depend on Russian-prose phrasing."""
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=5,
+            system=(
+                "You judge whether today's news implies an acute geopolitical "
+                "risk to crude-oil supply (Middle East military escalation, "
+                "strikes on energy infrastructure, OPEC+ supply cut, sanctions, "
+                "strait/route blockade). Answer with one word: YES or NO."
+            ),
+            messages=[{"role": "user", "content": macro_text}],
+        )
+        return resp.content[0].text.strip().upper().startswith("YES")
+    except Exception as e:
+        print(f"Digest: oil-geo detection failed: {e}")
+        return False
+
+
+def _write_oil_geo_flag(today: date, active: bool) -> None:
+    """Persist the day's oil-geo-risk flag the bot reads to arm the news window
+    for WTI/BRENT. Always rewritten so a stale True can't linger past its day."""
+    path = Path(__file__).parent.parent / "forecasts" / f"{today}_oil_geo.flag"
+    path.write_text("1" if active else "0", encoding="utf-8")
+    print(f"Oil-geo flag → {path} ({'active' if active else 'clear'})")
 
 
 _AUTO_STRENGTH = {"PARAMETERS": 0.5, "LOCK": 0.0}

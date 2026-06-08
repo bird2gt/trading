@@ -64,6 +64,27 @@ def surprise_bias(symbol: str, now: datetime | None = None,
     return result
 
 
+def latest_move_z(df15: pd.DataFrame | None, candles: int = REACTION_CANDLES) -> float | None:
+    """Signed size of the most recent `candles`-bar move in normal-15m sigmas.
+    Calendar-agnostic — used by the oil geo-risk window to gate on a live shock
+    rather than a scheduled release. None if volatility can't be estimated."""
+    if df15 is None or df15.empty:
+        return None
+    close = df15["close"].reset_index(drop=True)
+    if len(close) <= candles:
+        return None
+    end = len(close) - 1
+    start = end - candles
+    base = close.iloc[start]
+    if base <= 0:
+        return None
+    move = (close.iloc[end] - base) / base
+    sigma = close.pct_change().iloc[max(0, start - SIGMA_LOOKBACK):start].std()
+    if pd.isna(sigma) or sigma == 0 or pd.isna(move):
+        return None
+    return move / sigma
+
+
 def _reaction(df15: pd.DataFrame | None, event_time: datetime,
               now: datetime) -> tuple[int, float] | None:
     """(direction, strength) from the pair's move across the release window,
