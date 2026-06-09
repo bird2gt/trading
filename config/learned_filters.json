@@ -1,17 +1,84 @@
 {
-  "generated_at": "2026-06-08T20:49:38+00:00",
+  "generated_at": "2026-06-09T02:35:46+00:00",
   "min_segment_trades": 8,
   "min_symbol_trades": 20,
   "mode": "recommendations_only",
   "summary": {
-    "avg_realized_r": 0.03,
-    "expectancy": 0.53,
-    "net_profit": 13.35,
-    "profit_factor": 1.11,
-    "trades": 25,
-    "win_rate": 36.0
+    "avg_realized_r": 0.02,
+    "expectancy": 0.2,
+    "net_profit": 5.18,
+    "profit_factor": 1.04,
+    "trades": 26,
+    "win_rate": 34.6
   },
   "symbols": {
+    "AUD/JPY": {
+      "asset_group": "forex_cross",
+      "metrics": {
+        "avg_loss": -8.17,
+        "avg_realized_r": -0.36,
+        "avg_win": 0.0,
+        "expectancy": -8.17,
+        "losses": 1,
+        "net_profit": -8.17,
+        "profit_factor": 0.0,
+        "trades": 1,
+        "win_rate": 0.0,
+        "wins": 0
+      },
+      "recommendation": {
+        "allowed_sessions": [],
+        "avoid_sessions": [],
+        "avoid_sides": [],
+        "disabled": false,
+        "preferred_sides": [],
+        "reason": "Need at least 20 closed trades for a hard decision.",
+        "recommended_disabled": false,
+        "status": "insufficient_data"
+      },
+      "sessions": {
+        "asian": {
+          "avg_loss": -8.17,
+          "avg_realized_r": -0.36,
+          "avg_win": 0.0,
+          "expectancy": -8.17,
+          "losses": 1,
+          "net_profit": -8.17,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      },
+      "sides": {
+        "SELL": {
+          "avg_loss": -8.17,
+          "avg_realized_r": -0.36,
+          "avg_win": 0.0,
+          "expectancy": -8.17,
+          "losses": 1,
+          "net_profit": -8.17,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      },
+      "weekdays": {
+        "mon": {
+          "avg_loss": -8.17,
+          "avg_realized_r": -0.36,
+          "avg_win": 0.0,
+          "expectancy": -8.17,
+          "losses": 1,
+          "net_profit": -8.17,
+          "profit_factor": 0.0,
+          "trades": 1,
+          "win_rate": 0.0,
+          "wins": 0
+        }
+      }
+    },
     "BTC/USD": {
       "asset_group": "crypto",
       "metrics": {

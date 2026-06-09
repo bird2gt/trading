@@ -842,8 +842,15 @@ def trading_loop():
                         signal = STRATEGY_CRYPTO.generate_signal(df_closed)
                     elif asset_profile == "metal":
                         if symbol == "XAG/USD":
-                            df_xau_h4 = fetch_ohlcv("XAU/USD", outputsize=221, interval="4h")
-                            signal = STRATEGY_METALS_XAG.generate_signal(df_closed, df_xau=df_xau_h4.iloc[:-1])
+                            # XAU only feeds the optional Gold/Silver ratio filter — if gold
+                            # data is down, still trade silver on its own engine (df_xau=None),
+                            # just without the ratio gate. Don't let a gold outage kill silver.
+                            try:
+                                df_xau = fetch_ohlcv("XAU/USD", outputsize=221, interval="4h").iloc[:-1]
+                            except Exception as e:
+                                df_xau = None
+                                print(f"{symbol}: gold ratio filter skipped — XAU unavailable ({e})")
+                            signal = STRATEGY_METALS_XAG.generate_signal(df_closed, df_xau=df_xau)
                         else:
                             signal = STRATEGY_METALS_XAU.generate_signal(df_closed)
                     elif asset_profile == "index":

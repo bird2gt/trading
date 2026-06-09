@@ -100,8 +100,10 @@ _twelve_cache: dict = {}
 # Cache TTL = bar period: no new bar forms sooner, so no point fetching sooner
 _BAR_TTL = {"15min": 900, "1h": 3600, "4h": 14400, "1day": 86400}
 
-# Finage: free tier 1000 req/month — only used for XAG/USD (no other source covers it)
+# Finage: free tier 1000 req/month — SPOT metals, Twelve's only credit-independent
+# backup for XAU/XAG (Yahoo gives futures, not spot; Alpha/Polygon/Stooq don't cover gold).
 _FINAGE_MAP = {
+    "XAU/USD": "XAUUSD",
     "XAG/USD": "XAGUSD",
 }
 _finage_cache: dict = {}
@@ -224,7 +226,9 @@ _SOURCE_WARN_TTL = 600  # warn at most once per 10 min per (source, symbol, inte
 _SOURCE_PRIORITY = {
     "crypto": ("_fetch_recorded", "_fetch_binance", "_fetch_tiingo", "_fetch_twelve", "_fetch_yahoo", "_fetch_polygon", "_fetch_stooq"),
     "metal":  ("_fetch_recorded", "_fetch_twelve", "_fetch_alpha", "_fetch_finage", "_fetch_polygon", "_fetch_stooq"),
-    "forex":  ("_fetch_recorded", "_fetch_twelve", "_fetch_alpha", "_fetch_stooq", "_fetch_yahoo", "_fetch_polygon", "_fetch_tiingo"),
+    # Forex has free coverage (Yahoo/Stooq), so try those before Twelve to conserve
+    # Twelve's 800/day credits for XAU/XAG, which have no other live intraday source.
+    "forex":  ("_fetch_recorded", "_fetch_yahoo", "_fetch_stooq", "_fetch_twelve", "_fetch_alpha", "_fetch_polygon", "_fetch_tiingo"),
     "other":  ("_fetch_recorded", "_fetch_yahoo", "_fetch_twelve", "_fetch_polygon", "_fetch_stooq"),
 }
 
@@ -259,8 +263,9 @@ def fetch_ohlcv(symbol: str, interval: str = "4h", outputsize: int = 500) -> pd.
     for source_name in ordered_names:
         source = sources[source_name]
         source_name = source.__name__
-        if symbol in {"XAU/USD", "XAG/USD"} and source_name == "_fetch_yahoo":
-            continue
+        # NB: for XAU/XAG Yahoo returns GC=F/SI=F *futures*, not spot — gold basis can
+        # be ~0.6% (≈ATR), so SL/TP land off. It's last in the metal priority, so it's
+        # only ever reached as a total-outage fallback to keep direction alive.
         try:
             df = source(symbol, interval, outputsize)
             if not df.empty:
