@@ -778,7 +778,8 @@ def _asset_class(symbol: str) -> str:
         return "metal"
     if symbol in {"BRENT", "WTI", "BRENT/USD", "WTI/USD"}:
         return "energy"
-    if symbol in {"USTEC", "US500", "DE40", "JP225", ".USTEC", ".US500", ".DE40C", ".JP225"}:
+    if symbol in {"USTEC", "US500", "US30", "DE40", "JP225",
+                  ".USTEC", ".US500", ".US30Cash", ".DE40C", ".JP225"}:
         return "index"
     if "/" in symbol:
         return "forex"
